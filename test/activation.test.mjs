@@ -8,7 +8,7 @@ import { Context, symbols } from '@deepseek-ai/cordis'
 import Loader, { Group } from '@deepseek-ai/cordis-plugin-loader'
 import { composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import { SessionController } from '@deepseek-ai/dsh-api-session-controller'
-import { SessionStore } from '@deepseek-ai/dsh-session'
+import { SessionStore, SessionId } from '@deepseek-ai/dsh-session'
 import { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import SessionQuerySqlite from '@deepseek-ai/dsh-session-query-sqlite'
@@ -16,7 +16,9 @@ import { TypertRegistry } from '@deepseek-ai/dsh-typert-registry'
 import { TypertGatewayService } from '@deepseek-ai/dsh-api-gateway'
 import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import { FileUploads } from '@deepseek-ai/dsh-client-file-upload'
-import { LlmRuntime, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import { LlmRuntime, LlmAdapter, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { AgentLoop } from '@deepseek-ai/dsh-agent-loop'
+import * as JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import * as Plugin from '../lib/index.js'
@@ -75,10 +77,12 @@ test('enabling and disabling the real isolated bundle preserves native SessionCo
     ctx.provide('workspaceRegistry', { archivedSessionIds: [], list: () => [] })
     ctx.provide('sessionPersistence', { list: async () => [] })
     ctx.provide('credentials', { describe: async () => ({ configured: false, writable: true }), resolve: async () => undefined })
-    ctx.provide('remoteAccess', { decide: () => { throw new Error('Owner must bypass access policy') } })
-    // Exercise the exact native resolver ownership without requiring upload storage.
-    ctx.provide('fileUploads', { registerAgentResolver(resolve) { return FileUploads.prototype.registerAgentResolver.call(this, resolve) } })
+    ctx.provide('remoteAccess', { decide: () => { throw new Error('Owner must bypass access policy') }, allows: () => true })
+    // Use the real traced service. Borrowing its prototype on a plain object
+    // hides the callback-identity cleanup defect exercised below.
+    ctx.provide('commands', { registerFileReceiptResolver: () => () => {} })
     new HostConnectionService(ctx, [], {})
+    await ctx.plugin(FileUploads)
     new TypertGatewayService(ctx, {})
     const peer = ctx.connection.createPeer({ principal: { kind: 'owner' }, interactions: 'none' })
     const handler = ctx.connection.createSharedFetchHandler('/api')
@@ -132,6 +136,126 @@ test('enabling and disabling the real isolated bundle preserves native SessionCo
     assert.equal(controllerFiber.state, 2)
     assert.ok(ctx.typert.resources.get('session') === resourceBefore, 'native resource registration must stay unchanged')
     assert.equal((await readCatalog()).groups[0].models[0].id, 'small')
+  } finally {
+    await ctx.fiber.dispose()
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('native FileUploads resolver survives controller reload; provider reset recovers HTTP list/create without changing history', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'context-recall-controller-recovery-'))
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = directory
+  const ctx = new Context()
+  try {
+    for (const service of [TypertRegistry, SessionStore, AgentRegistry, SessionProjectionRegistry, LlmRuntime]) await ctx.plugin(service)
+    await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false, includeRuntimeContext: false })
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(AgentLoop, {})
+    ctx.llm.registerAdapter(['synthetic-recovery'], new CatalogAdapter())
+    ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'synthetic-recovery', model: 'small' }) })
+    ctx.provide('attachments', { imageLimits: { maxImageBytes: 1048576 } })
+    ctx.provide('fs', {})
+    ctx.provide('fileReferences', {})
+    ctx.provide('workingDirectory', {})
+    ctx.provide('workspaceRegistry', { archivedSessionIds: [], list: () => [] })
+    await ctx.plugin(JsonlPersistence, { root: join(directory, 'sessions'), compression: 'none' })
+    ctx.provide('credentials', { describe: async () => ({ configured: false, writable: true }), resolve: async () => undefined })
+    ctx.provide('remoteAccess', { decide: () => { throw new Error('Owner must bypass access policy') }, allows: () => true })
+    ctx.provide('commands', { registerFileReceiptResolver: () => () => {} })
+    new HostConnectionService(ctx, [], {})
+    new TypertGatewayService(ctx, {})
+    const peer = ctx.connection.createPeer({ principal: { kind: 'owner' }, interactions: 'none' })
+    const handler = ctx.connection.createSharedFetchHandler('/api')
+    const rpc = async (method, args = {}, expectUnavailable = false) => {
+      const response = await handler.fetch(new Request(`http://localhost/api/${method}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload: { args } }),
+      }), peer)
+      if (expectUnavailable) { assert.equal(response.status, 404); return { unavailable: true } }
+      assert.equal(response.status, 200)
+      return response.json()
+    }
+    const retained = ['retained-session-one', 'retained-session-two'].map(id => {
+      const session = ctx.sessions.create(SessionId(id))
+      session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: `Original retained history ${id}` }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      return { session, events: session.snapshotEvents() }
+    })
+    for (const { session, events } of retained) {
+      const handle = await ctx.sessionPersistence.create(session.header)
+      await handle.append(events)
+      await handle.flush()
+      await handle.close()
+    }
+    const loader = new Loader(ctx, { baseUrl: new URL('../package.json', import.meta.url).href })
+    loader.builtins.group = Group
+    await new Promise(resolve => setImmediate(resolve))
+    const originalImport = loader.import.bind(loader)
+    loader.import = (name, ...args) => name === 'dsh-context-recall' ? Plugin
+      : name === '@deepseek-ai/dsh-session-query-sqlite' ? { default: SessionQuerySqlite }
+        : name === '@deepseek-ai/dsh-api-session-controller' ? { default: SessionController }
+          : name === '@deepseek-ai/dsh-client-file-upload' ? { default: FileUploads }
+            : originalImport(name, ...args)
+    ctx.provide('dshHomePath', path => join(directory, path))
+    const nativeRows = [
+      { id: 'session-query-sqlite', name: '@deepseek-ai/dsh-session-query-sqlite', config: { path: ':memory:', openAt: 'never' } },
+      { id: 'file-upload', name: '@deepseek-ai/dsh-client-file-upload' },
+      { id: 'session-controller', name: '@deepseek-ai/dsh-api-session-controller', config: {} },
+    ]
+    await loader.root.update(nativeRows)
+    await loader.await()
+    assert.equal(loader.resolve('session-controller').fiber.state, 2)
+    assert.equal(unwrapReply(await rpc('session/modelCatalog')).groups[0].models[0].id, 'small')
+    // Exercise the actual rc.5 service, not a prototype method borrowed onto a
+    // plain object: caller-bound service tracing changes callback identities.
+    await loader.update('session-controller', { disabled: true })
+    await loader.await()
+    await loader.update('session-controller', { disabled: false })
+    await loader.await()
+    const failed = loader.resolve('session-controller').fiber
+    await assert.rejects(failed.await(), /file-upload: Agent resolver is already registered/)
+    assert.equal(ctx.get('sessionController'), undefined)
+    assert.equal((await rpc('session/modelCatalog', {}, true)).unavailable, true)
+    const bundleRows = composeEntries([loadOverlayPatches('recovery-test', patchFile)])
+    await loader.root.update([...nativeRows, ...bundleRows])
+    await loader.await()
+    assert.equal(loader.resolve('session-controller').fiber, failed)
+    assert.equal(ctx.get('sessionController'), undefined, 'installing the repaired bundle does not implicitly reset an unrelated failed row')
+    await loader.root.update(nativeRows)
+    await loader.await()
+    assert.equal(loader.resolve('session-controller').fiber, failed)
+    assert.equal(ctx.get('sessionController'), undefined, 'disabling recall alone cannot repair the already failed controller')
+    for (const { session, events } of retained) assert.deepEqual(session.snapshotEvents(), events)
+
+    // A controller-only retry cannot clear another service's retained resolver.
+    // Reset its provider first, using the same entry transitions as the manager.
+    await loader.update('session-controller', { disabled: true })
+    await loader.await()
+    await loader.update('file-upload', { disabled: true })
+    await loader.await()
+    await loader.update('file-upload', { disabled: false })
+    await loader.await()
+    await loader.update('session-controller', { disabled: false })
+    await loader.await()
+    assert.equal(loader.resolve('session-controller').fiber.state, 2)
+    assert.equal(unwrapReply(await rpc('session/modelCatalog')).groups[0].models[0].id, 'small')
+    const before = unwrapReply(await rpc('session/list', { _request: {} }))
+    for (const { session } of retained) assert.ok(before.items.some(item => item.sessionId === session.id))
+    const created = unwrapReply(await rpc('session/create', { request: { cwd: directory } }))
+    assert.ok(typeof created.sessionId === 'string' && created.sessionId.length > 0)
+    const after = unwrapReply(await rpc('session/list', { _request: {} }))
+    assert.ok(after.items.some(item => item.sessionId === created.sessionId))
+    for (const { session, events } of retained) {
+      assert.ok(after.items.some(item => item.sessionId === session.id))
+      assert.deepEqual(session.snapshotEvents(), events)
+      const handle = await ctx.sessionPersistence.open(session.id, 'read')
+      try { assert.deepEqual((await handle.read()).events, events) }
+      finally { await handle.close() }
+    }
   } finally {
     await ctx.fiber.dispose()
     if (previousHome === undefined) delete process.env.DSH_HOME
