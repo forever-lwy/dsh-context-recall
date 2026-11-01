@@ -1,0 +1,13 @@
+# Applied only when the user installs this version through the plugin manager.
+- insert:
+    - id: context-recall
+      name: dsh-context-recall
+
+# Preserve the native compaction policy/config row; override its summarize hook.
+- id: compaction-basic
+  name: dsh-context-recall/compaction
+
+- id: session-query-sqlite
+  config:
+    path: !!js dshHomePath('storages/session-search.db')
+    openAt: first-search
