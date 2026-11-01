@@ -1,0 +1,151 @@
+{
+  "testedAt": "2026-11-01T16:39:17.337545+08:00",
+  "dshVersion": "0.2.1-rc.5",
+  "pluginVersion": "0.1.1",
+  "testSession": {
+    "id": "828300c9-23b5-4f39-afa9-ecda2a74ea51",
+    "title": "插件压缩回忆实测 2026-11-01",
+    "syntheticDataOnly": true,
+    "marker": "RECALL-CHECK-c5c00e250317"
+  },
+  "settingsRevision": 1,
+  "configuration": {
+    "compression": {
+      "provider": "google-ai-studio",
+      "model": "gemini-3.8-flash"
+    },
+    "embedding": {
+      "enabled": true,
+      "baseURL": "https://api.siliconflow.cn/v1",
+      "model": "BAAI/bge-m3",
+      "dimensions": 0,
+      "batchSize": 16,
+      "timeoutMs": 30000,
+      "background": true
+    },
+    "recall": {
+      "semantic": true,
+      "warmup": "gentle",
+      "coverageThreshold": 0.9,
+      "eventGap": 5,
+      "maxEvents": 3,
+      "anchor": true,
+      "anchorRounds": 3,
+      "limit": 10,
+      "context": 3
+    }
+  },
+  "conversationModel": {
+    "provider": "google-ai-studio",
+    "model": "gemini-4-argon",
+    "reasoningEffort": "high"
+  },
+  "onlineEmbeddingConnection": {
+    "dimensions": 1024,
+    "message": "连接成功，向量维度 1024。测试未发送会话历史。"
+  },
+  "compaction": {
+    "eventSeq": 29,
+    "provider": "google-ai-studio",
+    "model": "gemini-3.8-flash",
+    "llmStreamCall": true,
+    "usage": {
+      "inputTokens": 16295,
+      "outputTokens": 321,
+      "cacheReadTokens": 0,
+      "reasoningTokens": 0,
+      "totalTokens": 16616
+    },
+    "maxTokens": 65536,
+    "shadowedRange": {
+      "start": 10,
+      "end": 23
+    },
+    "shadowedSeqs": [
+      10,
+      11,
+      12,
+      15,
+      23
+    ],
+    "shadowedTokenCount": 3531,
+    "commandReceipt": {
+      "commandId": "cmd-146a5875-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 5 history items (~3531 tokens).",
+        "sourceEventSeq": 29
+      }
+    }
+  },
+  "vectorEvidence": {
+    "checkedAt": "2026-11-01T08:36:38.704Z",
+    "testSessionId": "828300c9-23b5-4f39-afa9-ecda2a74ea51",
+    "queryChinese": "交接班使用的紫色记事本由谁保管，放在几号柜子，取用码是什么？",
+    "localFuzzyHitCount": 0,
+    "globalDocumentCount": 31,
+    "globalVectorCount": 31,
+    "globalCoverage": 1,
+    "targetDocumentCount": 10,
+    "targetVectorCount": 10,
+    "targetCoverage": 1,
+    "vectorDimensions": 1024,
+    "targetVectorDimensions": [
+      1024
+    ],
+    "fingerprintMatchesCurrentConfig": true,
+    "embeddingModel": "BAAI/bge-m3",
+    "semanticEnabled": true
+  },
+  "recallCalls": [
+    {
+      "callId": "call_2100052",
+      "callEventSeq": 41,
+      "resultEventSeq": 43,
+      "arguments": {
+        "limit": 5,
+        "query": "交接班使用的紫色记事本由谁保管，放在几号柜子，取用码是什么？",
+        "scope": "session"
+      },
+      "ok": true,
+      "resultText": "Recall \"交接班使用的紫色记事本由谁保管，放在几号柜子，取用码是什么？\": 1 session(s) matched.\n- 插件压缩回忆实测 2026-11-01 (828300c9-23b5-4f39-afa9-ecda2a74ea51, /workspace) — This is an isolated acceptance test; all names and codes below are fictional. Do not use tools, do not create files, and do not change any settings. Retain the following source note for later verification. Reply with exactly ACK in ASCII, …",
+      "callToResultMs": 349
+    },
+    {
+      "callId": "call_2773460",
+      "callEventSeq": 47,
+      "resultEventSeq": 49,
+      "arguments": {
+        "detail": {
+          "after": 0,
+          "before": 0,
+          "seq": 10,
+          "sessionId": "828300c9-23b5-4f39-afa9-ecda2a74ea51"
+        },
+        "query": "交接班使用的紫色记事本由谁保管，放在几号柜子，取用码是什么？"
+      },
+      "ok": true,
+      "resultText": "Recall \"交接班使用的紫色记事本由谁保管，放在几号柜子，取用码是什么？\": 1 session(s) matched.\n- 插件压缩回忆实测 2026-11-01 (828300c9-23b5-4f39-afa9-ecda2a74ea51)\n  [10 user/message] This is an isolated acceptance test; all names and codes below are fictional. Do not use tools, do not create files, and do not change any settings. Retain the following source note for later verification. Reply with exactly ACK in ASCII, without explanation.\n\nWarehouse handover memo: the violet shift journal is held by Mara Wexler. It is stored in locker seventeen. The access code is 729418.\nTest marker: RECALL-CHECK-c5c00e250317",
+      "callToResultMs": 49
+    }
+  ],
+  "checks": {
+    "globalCompressionRouteUsed": true,
+    "compressionDiffersFromConversation": true,
+    "genuineLlmStreamAndUsage": true,
+    "originalFactShadowed": true,
+    "twoRealRecallCalls": true,
+    "exactChineseQueryUsed": true,
+    "semanticHitReturnsOriginalEnglishSource": true,
+    "originalDetailMatchesEveryFact": true,
+    "finalAnswerMatchesEveryFact": true,
+    "pluginSettingsUnchanged": true,
+    "conversationDefaultUnchanged": true,
+    "allEnabledServicesActive": true,
+    "zeroLocalFuzzyHitsForSemanticQuery": true,
+    "onlineVectorSpaceMatchesCurrentConfig": true,
+    "semanticCoverageGateSatisfied": true,
+    "embeddingAndRecallSettingsUnchanged": true
+  },
+  "scope": "Only this synthetic session received prompts or compaction. Global settings and existing conversations were not changed. No plugin reinstall or service restart was performed."
+}
