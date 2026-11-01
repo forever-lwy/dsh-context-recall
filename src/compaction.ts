@@ -1,11 +1,13 @@
-import type { Context } from '@deepseek-ai/cordis'
+import { symbols, type Context } from '@deepseek-ai/cordis'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import type { BasicCompactionConfig } from '@deepseek-ai/dsh-compaction-basic'
+import type { ResolvedConfig } from '@deepseek-ai/dsh-compaction-basic'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { BlockAssembler, LlmError, contentHasImage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, GenerateOptions, Message, TokenUsage, ToolSchema } from '@deepseek-ai/dsh-llm'
 import type {} from './settings.js'
 import type { ConfigData } from './config.js'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 
 /**
  * The summary directive and safe stream projection follow dsh-compaction-basic
@@ -162,3 +164,77 @@ export class ContextRecallCompaction extends BasicCompactionEngine {
 }
 
 export default ContextRecallCompaction
+
+interface NativeSummaryHook {
+  ctx: Context
+  config: ResolvedConfig
+  summarize(input: SummaryInput, agent: Agent, signal?: AbortSignal): Promise<NativeSummaryResult>
+}
+
+/**
+ * Extend the native instances selected by web Agent presets. Their isolated
+ * compaction services are intentionally invisible as root `ctx.compaction`.
+ * Only the documented summarize customization point is decorated; prototypes,
+ * service registrations, preset documents and LLM routing are preserved.
+ */
+export function registerCompressionBridge(ctx: Context, getConfig: () => Pick<ConfigData, 'compression'>): () => void {
+  const restorers = new Map<object, () => void>()
+  let active = true
+  const bind = (value: unknown) => {
+    if (!active || !value || typeof value !== 'object') return
+    // serviceFor() returns caller-bound Cordis facades whose identity changes
+    // on each read. Decorate and deduplicate the one underlying implementation.
+    const implementation = Reflect.get(value, symbols.original) ?? value
+    if (restorers.has(implementation) || !(implementation instanceof BasicCompactionEngine)) return
+    const engine = implementation as unknown as NativeSummaryHook
+    const ownerCtx = Object.getOwnPropertyDescriptor(engine, 'ctx')?.value as Context | undefined
+    if (!ownerCtx) return
+    const own = Object.getOwnPropertyDescriptor(engine, 'summarize')
+    if (own && !own.configurable) return
+    const original = engine.summarize
+    if (typeof original !== 'function') return
+    const wrapper: NativeSummaryHook['summarize'] = function (this: NativeSummaryHook, input, agent, signal) {
+      const { provider, model } = active ? getConfig().compression : { provider: '', model: '' }
+      if (!provider && !model) return original.call(this, input, agent, signal)
+      if (!provider || !model) return Promise.reject(new Error('Compression provider and model must be configured together.'))
+      const conversation = agent.session.requestHeader()?.config ?? agent.options
+      const policy = this.config.modelPolicies.find(item => item.provider === conversation.provider && item.model === conversation.model)
+      return summarizeWithGlobalModel(ownerCtx, { provider, model, maxTokens: policy?.maxTokens ?? this.config.maxTokens }, input, agent, signal)
+    }
+    Object.defineProperty(engine, 'summarize', {
+      configurable: true, writable: true, enumerable: own?.enumerable ?? false, value: wrapper,
+    })
+    restorers.set(engine, () => {
+      // A later extension keeps ownership. A retained wrapper delegates to the
+      // prior hook after this bridge has been disposed.
+      if (Object.getOwnPropertyDescriptor(engine, 'summarize')?.value !== wrapper) return
+      if (own) Object.defineProperty(engine, 'summarize', own)
+      else delete (engine as Partial<NativeSummaryHook>).summarize
+    })
+  }
+  const bindAgent = (agent: Agent) => bind(ctx.agentPresets.serviceFor(agent, 'compaction'))
+  const scan = () => { for (const agent of ctx.agents.list()) bindAgent(agent) }
+  const disposers: (() => unknown)[] = [
+    // Awaited by AgentRegistry before the first queued input starts.
+    ctx.on('agent/created', ({ agent }) => { bindAgent(agent); return undefined }),
+    ctx.on('agent-preset/selected', sessionId => { const agent = ctx.agents.get(sessionId); if (agent) bindAgent(agent) }),
+    // Rebind a preset engine hot-replaced while its Agent remains alive.
+    ctx.on('agent/pre-step', (payload, next) => { bindAgent(payload.agent); return next() }, { prepend: true }),
+    ctx.on('agent/request-error', (payload, next) => { bindAgent(payload.agent); return next() }, { prepend: true }),
+    // Cordis publishes isolated realms through this lifecycle event too. This
+    // covers a hot-reloaded backend followed immediately by manual /compact.
+    ctx.on('internal/service', (name, value) => { if (name === 'compaction') bind(value) }, { global: true }),
+  ]
+  const root = ctx.inject(['compaction'], nativeCtx => { bind(nativeCtx.compaction) })
+  scan()
+  const dispose = () => {
+    if (!active) return
+    active = false
+    for (const disposeListener of disposers) disposeListener()
+    void root.dispose()
+    for (const restore of restorers.values()) restore()
+    restorers.clear()
+  }
+  ctx.effect(() => dispose, 'context-recall: native compaction hooks')
+  return dispose
+}

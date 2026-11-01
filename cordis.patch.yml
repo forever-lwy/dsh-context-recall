@@ -1,13 +1,16 @@
-# Applied only when the user installs this version through the plugin manager.
+# Own the search service inside this group. Never replace/reconfigure the
+# application's query provider: its lifetime also controls SessionController.
 - insert:
-    - id: context-recall
-      name: dsh-context-recall
-
-# Preserve the native compaction policy/config row; override its summarize hook.
-- id: compaction-basic
-  name: dsh-context-recall/compaction
-
-- id: session-query-sqlite
-  config:
-    path: !!js dshHomePath('storages/session-search.db')
-    openAt: first-search
+    - id: context-recall-scope
+      name: cordis:group
+      group: true
+      isolate:
+        sessionQuery: true
+      config:
+        - id: context-recall-query
+          name: '@deepseek-ai/dsh-session-query-sqlite'
+          config:
+            path: !!js dshHomePath('storages/context-recall-fulltext.db')
+            openAt: first-search
+        - id: context-recall
+          name: dsh-context-recall

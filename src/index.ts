@@ -7,12 +7,18 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { registerSettings } from './settings.js'
 import { OnlineEmbedder, vectorFingerprint } from './embedding.js'
 import { applyRecall } from './recall.js'
+import { registerCompressionBridge } from './compaction.js'
 
 export const name = 'dsh-context-recall'
 export const inject = ['tools', 'sessions', 'sessionQuery', 'sessionPersistence', 'agents', 'systemPrompt', 'llm', 'credentials', 'typert']
 
 export async function apply(ctx: Context): Promise<void> {
   const settings = await registerSettings(ctx)
+  // Web's real backends belong to isolated preset scopes. Bind each native
+  // instance through the registry; leave their declarations and policies intact.
+  ctx.inject(['agentPresets'], scoped => {
+    registerCompressionBridge(scoped, () => settings.current())
+  })
   let embedder: OnlineEmbedder | null = null
   let connectionIdentity = ''
   ctx.effect(() => async () => { await embedder?.dispose(); embedder = null })
