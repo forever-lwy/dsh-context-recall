@@ -51,7 +51,7 @@ test('compiled GUI reads and saves through actual rc.5 HTTP Remote transport wit
   })
   const store = new ConfigStore(join(directory, 'settings.json'))
   await store.load()
-  new ContextRecallService(host, store)
+  const service = new ContextRecallService(host, store)
   host.typert.remotes.register(remoteInfo)
   const requests = []
   const handler = host.connection.createSharedFetchHandler('/api')
@@ -90,6 +90,7 @@ test('compiled GUI reads and saves through actual rc.5 HTTP Remote transport wit
   const initial = await face.read(signal)
   assert.deepEqual(initial.models.map(model => [model.provider, model.model]), [['synthetic-provider', 'summary-small']])
   assert.equal(initial.credential.configured, false)
+  assert.equal(initial.config.compression.thresholdRatio, null)
   assert.equal(styles.length, 1)
   assert.equal(registrations.find(entry => entry.options.key === 'recall').options.name, 'tool.call.toolview')
 
@@ -103,6 +104,7 @@ test('compiled GUI reads and saves through actual rc.5 HTTP Remote transport wit
   assert.equal((await readFile(store.path, 'utf8')).includes(secret), false)
   assert.equal(credentials.size, 1)
   assert.ok([...credentials.values()].includes(secret))
+  assert.equal(saved.config.compression.thresholdRatio, null, 'older clients inherit the native policy')
 
   await assert.rejects(face.save({ config, expectedRevision: initial.revision }, signal), /其他窗口修改/)
   assert.equal((await face.read(signal)).revision, saved.revision)
@@ -110,7 +112,23 @@ test('compiled GUI reads and saves through actual rc.5 HTTP Remote transport wit
   invalid.compression.model = ''
   await assert.rejects(face.save({ config: invalid, expectedRevision: saved.revision }, signal))
   assert.equal((await face.read(signal)).revision, saved.revision)
-  const cleared = await face.save({ config, expectedRevision: saved.revision, clearApiKey: true }, signal)
+  config.compression.thresholdRatio = 0.575
+  const custom = await face.save({ config, expectedRevision: saved.revision }, signal)
+  assert.equal(custom.config.compression.thresholdRatio, 0.575)
+  assert.equal((await face.read(signal)).config.compression.thresholdRatio, 0.575)
+  assert.equal(JSON.parse(await readFile(store.path, 'utf8')).config.compression.thresholdRatio, 0.575)
+  const stopValidation = service.addThresholdValidator(ratio => {
+    if (ratio !== null && ratio <= 0.6) throw new Error('自动压缩比例须高于原生保留比例 60%。')
+  })
+  const beforeRejectedSave = await readFile(store.path, 'utf8')
+  await assert.rejects(face.save({ config, expectedRevision: custom.revision, apiKey: 'must-not-replace-key' }, signal), /60%/)
+  assert.equal(await readFile(store.path, 'utf8'), beforeRejectedSave)
+  assert.deepEqual([...credentials.values()], [secret])
+  assert.equal((await face.read(signal)).revision, custom.revision)
+  stopValidation()
+  config.compression.thresholdRatio = null
+  const cleared = await face.save({ config, expectedRevision: custom.revision, clearApiKey: true }, signal)
+  assert.equal(cleared.config.compression.thresholdRatio, null)
   assert.equal(cleared.credential.configured, false)
   assert.equal(credentials.size, 0)
   assert.ok(requests.every(request => request.type === 'client-request'))

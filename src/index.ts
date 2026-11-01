@@ -17,7 +17,9 @@ export async function apply(ctx: Context): Promise<void> {
   // Web's real backends belong to isolated preset scopes. Bind each native
   // instance through the registry; leave their declarations and policies intact.
   ctx.inject(['agentPresets'], scoped => {
-    registerCompressionBridge(scoped, () => settings.current())
+    registerCompressionBridge(scoped, () => settings.current(), {
+      registerThresholdValidator: validate => settings.addThresholdValidator(validate),
+    })
   })
   let embedder: OnlineEmbedder | null = null
   let connectionIdentity = ''

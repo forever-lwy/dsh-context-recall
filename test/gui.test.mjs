@@ -62,7 +62,56 @@ test('every configuration field has a GUI control and configured model selection
   assert.equal(ui.field('compression.model').value,'deepseek-chat')
   await ui.submit()
   assert.equal(ui.saves[0].request.expectedRevision,3)
-  assert.deepEqual(ui.saves[0].request.config.compression,{provider:'deepseek',model:'deepseek-chat'})
+  assert.deepEqual(ui.saves[0].request.config.compression,{provider:'deepseek',model:'deepseek-chat',thresholdRatio:null})
+})
+
+test('automatic compaction threshold uses a precise percentage and survives model selection', async t => {
+  const ui = await mount(t)
+  assert.equal(ui.field('compression.thresholdMode').value,'inherit')
+  assert.equal(ui.field('compression.thresholdRatio').disabled,true)
+  assert.equal(ui.field('compression.thresholdRatio').value,'')
+  await ui.change('compression.thresholdMode','custom')
+  assert.equal(ui.field('compression.thresholdRatio').disabled,false)
+  await ui.change('compression.thresholdRatio','57.5')
+  await ui.change('compression.catalog',JSON.stringify(['deepseek','deepseek-chat']))
+  assert.equal(ui.field('compression.thresholdRatio').value,'57.5')
+  await ui.submit()
+  assert.equal(ui.saves[0].request.config.compression.thresholdRatio,0.575)
+  assert.equal(ui.field('compression.thresholdRatio').value,'57.5')
+  assert.match(ui.container.textContent,/下一次自动检查/)
+  assert.match(ui.container.textContent,/不会立即压缩/)
+})
+
+test('saved decimal threshold is not rounded and native inheritance sends an explicit null', async t => {
+  const saved = snapshot(); saved.config.compression.thresholdRatio=0.333
+  const ui = await mount(t,{read:async()=>saved})
+  assert.equal(ui.field('compression.thresholdRatio').value,'33.3')
+  await ui.change('compression.thresholdMode','inherit')
+  assert.equal(ui.field('compression.thresholdRatio').disabled,true)
+  await ui.change('compression.catalog',JSON.stringify(['deepseek','deepseek-chat']))
+  await ui.submit()
+  assert.equal(ui.saves[0].request.config.compression.thresholdRatio,null)
+  await ui.change('compression.thresholdMode','custom')
+  await ui.change('compression.thresholdRatio','99')
+  await ui.submit()
+  assert.equal(ui.saves[1].request.config.compression.thresholdRatio,0.99)
+  await ui.change('compression.thresholdRatio','17')
+  await ui.submit()
+  assert.equal(ui.saves[2].request.config.compression.thresholdRatio,0.17)
+})
+
+test('invalid percentages never reach save and switching to native policy clears the invalid override', async t => {
+  const ui = await mount(t)
+  await ui.change('compression.thresholdMode','custom')
+  for (const invalid of ['','0','1','16','16.999','100','NaN','Infinity','-1','1e2','98.9999999999999999']) {
+    await ui.change('compression.thresholdRatio',invalid)
+    await ui.submit()
+    assert.equal(ui.saves.length,0,invalid)
+    assert.match(ui.container.querySelector('[role=alert]').textContent,/17–99/)
+  }
+  await ui.change('compression.thresholdMode','inherit')
+  await ui.submit()
+  assert.equal(ui.saves[0].request.config.compression.thresholdRatio,null)
 })
 
 test('no autosave, drafts survive unrelated rerender, explicit save carries new key then clears password', async t => {

@@ -10,6 +10,24 @@ export interface SettingsFace {
 }
 export interface SettingsProps extends SettingsFace { t?: (key: string) => string }
 
+/** Move the decimal point as text so 0.575 displays as 57.5, without multiplying floats. */
+function thresholdPercent(ratio: number | null): string {
+  if (ratio === null) return '80'
+  const decimal = (String(ratio).split('.')[1] ?? '').padEnd(2, '0')
+  return `${Number(decimal.slice(0, 2))}${decimal.length > 2 ? `.${decimal.slice(2)}` : ''}`
+}
+
+function thresholdRatio(percent: string): number {
+  if (!/^\d+(?:\.\d+)?$/.test(percent) || Number(percent) < 17 || Number(percent) > 99) return NaN
+  const [whole, fraction = ''] = percent.split('.')
+  const digits = whole.padStart(3, '0')
+  const ratio = Number(`${digits.slice(0, -2)}.${digits.slice(-2)}${fraction}`)
+  const trimmedFraction = fraction.replace(/0+$/, '')
+  const canonical = `${whole.replace(/^0+(?=\d)/, '')}${trimmedFraction ? `.${trimmedFraction}` : ''}`
+  // Reject precision loss instead of silently changing the percentage during a save.
+  return thresholdPercent(ratio) === canonical ? ratio : NaN
+}
+
 /** Settings stay local until an explicit save. Read/test/save lifetimes follow the mounted page. */
 export function ContextRecallSettings(props: SettingsProps) {
   const t = props.t ?? ((key: string) => zh[key] ?? key)
@@ -17,6 +35,7 @@ export function ContextRecallSettings(props: SettingsProps) {
   operations.current = props
   const [view, setView] = useState<SettingsView | null>(null)
   const [draft, setDraft] = useState<ConfigData | null>(null)
+  const [thresholdInput, setThresholdInput] = useState('80')
   const [apiKey, setApiKey] = useState('')
   const [clearApiKey, setClearApiKey] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -38,6 +57,7 @@ export function ContextRecallSettings(props: SettingsProps) {
     void operations.current.read(controller.signal).then(snapshot => {
       if (controller.signal.aborted) return
       setView(snapshot); setDraft(structuredClone(snapshot.config)); setDirty(false)
+      setThresholdInput(thresholdPercent(snapshot.config.compression.thresholdRatio))
       setApiKey(''); setClearApiKey(false)
     }).catch(reason => {
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : t('failed'))
@@ -53,6 +73,10 @@ export function ContextRecallSettings(props: SettingsProps) {
   }
   const changedSecret = (value: string) => { setApiKey(value); setClearApiKey(false); setDirty(true); setMessage(''); setError('') }
   const parseDraft = (): ConfigData | null => {
+    if (draft?.compression.thresholdRatio !== null && !Number.isFinite(thresholdRatio(thresholdInput))) {
+      setError(t('thresholdInvalid'))
+      return null
+    }
     const parsed = configSchema.safeParse(draft)
     if (!parsed.success) {
       setError(t('invalid') + parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; '))
@@ -73,6 +97,7 @@ export function ContextRecallSettings(props: SettingsProps) {
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}), ...(clearApiKey ? { clearApiKey: true } : {}) }, controller.signal)
         if (controller.signal.aborted || !mounted.current) return
         setView(snapshot); setDraft(structuredClone(snapshot.config)); setDirty(false)
+        setThresholdInput(thresholdPercent(snapshot.config.compression.thresholdRatio))
         setApiKey(''); setClearApiKey(false); setMessage(t('saved'))
       } else {
         const result = await operations.current.test({ config, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) }, controller.signal)
@@ -120,7 +145,7 @@ export function ContextRecallSettings(props: SettingsProps) {
               onChange={event => {
                 if (event.target.value === 'custom') return
                 const [provider, model] = event.target.value ? JSON.parse(event.target.value) : ['', '']
-                setDraft(previous => previous ? { ...previous, compression: { provider, model } } : previous)
+                setDraft(previous => previous ? { ...previous, compression: { ...previous.compression, provider, model } } : previous)
                 setDirty(true); setMessage(''); setError('')
               }}>
               <option value="">{t('inherit')}</option><option value="custom">{t('custom')}</option>
@@ -128,6 +153,20 @@ export function ContextRecallSettings(props: SettingsProps) {
             </select>
           </label>
           <div className="dcr-grid">{field('compression', 'provider', 'provider')}{field('compression', 'model', 'compressionModel')}</div>
+          <div className="dcr-grid">
+            <label className="dcr-field"><span>{t('thresholdMode')}</span>
+              <select data-setting="compression.thresholdMode" value={draft.compression.thresholdRatio === null ? 'inherit' : 'custom'}
+                onChange={event => update('compression', 'thresholdRatio', event.target.value === 'inherit' ? null : thresholdRatio(thresholdInput))}>
+                <option value="inherit">{t('thresholdInherit')}</option><option value="custom">{t('thresholdCustom')}</option>
+              </select>
+            </label>
+            <label className="dcr-field" htmlFor={`${prefix}-compression-thresholdRatio`}><span>{t('thresholdRatio')}</span>
+              <input id={`${prefix}-compression-thresholdRatio`} data-setting="compression.thresholdRatio" type="number" min="17" max="99" step="any"
+                disabled={draft.compression.thresholdRatio === null} value={draft.compression.thresholdRatio === null ? '' : thresholdInput}
+                onChange={event => { setThresholdInput(event.target.value); update('compression', 'thresholdRatio', thresholdRatio(event.target.value)) }} />
+            </label>
+          </div>
+          <p className="dcr-hint">{t('thresholdHelp')}</p>
         </fieldset>
         <fieldset disabled={busy !== null}>
           <legend>{t('embedding')}</legend><p className="dcr-disclosure">{t('disclosure')}</p>

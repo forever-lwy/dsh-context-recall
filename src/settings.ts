@@ -12,8 +12,13 @@ import type { ConfigData } from './config.js'
 declare module '@deepseek-ai/cordis' { interface Context { contextRecall: ContextRecallService } }
 export class ContextRecallService extends TypertRemoteService {
   private saves: Promise<unknown> = Promise.resolve()
+  private readonly thresholdValidators = new Set<(ratio: number | null) => void>()
   constructor(ctx: Context, readonly store: ConfigStore) { super(ctx, 'contextRecall') }
   current(): ConfigData { return this.store.current() }
+  addThresholdValidator(validate: (ratio: number | null) => void): () => void {
+    this.thresholdValidators.add(validate)
+    return () => { this.thresholdValidators.delete(validate) }
+  }
   async resolveKey(ref: string): Promise<string | undefined> {
     return (await this.ctx.credentials.resolve(credentialRef(ref)))?.value
   }
@@ -49,6 +54,11 @@ export class ContextRecallService extends TypertRemoteService {
     if (request.apiKey && request.clearApiKey) throw new RemoteError('gateway/bad-request', '不能同时清除和填写 API Key。', {})
     await this.store.load()
     if (request.expectedRevision !== this.store.revision()) throw new RemoteError('gateway/bad-request', '配置已在其他窗口修改，请重新加载后保存。', {})
+    try {
+      for (const validate of this.thresholdValidators) validate(request.config.compression.thresholdRatio)
+    } catch (error) {
+      throw new RemoteError('gateway/bad-request', error instanceof Error ? error.message : '压缩触发比例与原生保留策略冲突。', {})
+    }
     if (request.config.compression.provider) {
       try { await this.ctx.llm.resolveModelInfo(request.config.compression.provider, request.config.compression.model, signal) }
       catch { throw new RemoteError('gateway/bad-request', '压缩模型不可用，请先在 dsh 模型设置中配置该提供方与模型。', {}) }

@@ -5,7 +5,10 @@ export const configSchema = z.object({
   compression: z.object({
     provider: z.string().trim().max(512).default(''),
     model: z.string().trim().max(1024).default(''),
-  }).strict().default({ provider: '', model: '' }).refine(v => !!v.provider === !!v.model, '压缩提供方和模型必须同时填写或同时留空。'),
+    // Native web presets retain 16% of recent context. Preserve that policy
+    // rather than implicitly reducing retention for an earlier trigger.
+    thresholdRatio: z.number().min(0.17).max(0.99).nullable().default(null),
+  }).strict().default({ provider: '', model: '', thresholdRatio: null }).refine(v => !!v.provider === !!v.model, '压缩提供方和模型必须同时填写或同时留空。'),
   embedding: z.object({
     enabled: z.boolean().default(false),
     baseURL: z.string().trim().max(2048).default('https://api.openai.com/v1').refine(value => {

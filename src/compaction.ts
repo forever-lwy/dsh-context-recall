@@ -3,6 +3,7 @@ import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import type { BasicCompactionConfig } from '@deepseek-ai/dsh-compaction-basic'
 import type { ResolvedConfig } from '@deepseek-ai/dsh-compaction-basic'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { CompactionResult, CompactionTrigger } from '@deepseek-ai/dsh-compaction'
 import { BlockAssembler, LlmError, contentHasImage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, GenerateOptions, Message, TokenUsage, ToolSchema } from '@deepseek-ai/dsh-llm'
 import type {} from './settings.js'
@@ -169,15 +170,52 @@ interface NativeSummaryHook {
   ctx: Context
   config: ResolvedConfig
   summarize(input: SummaryInput, agent: Agent, signal?: AbortSignal): Promise<NativeSummaryResult>
+  compactIfNeeded(agent: Agent, trigger: CompactionTrigger, signal: AbortSignal): Promise<CompactionResult | null>
+}
+
+export interface CompressionBridgeOptions {
+  registerThresholdValidator?: (validate: (ratio: number | null) => void) => () => void
+}
+
+/** Retention is native policy; a threshold override never shrinks its tail. */
+export function thresholdRetentionProblem(config: ResolvedConfig, ratio: number): string | undefined {
+  if (config.retainRatio !== undefined && ratio <= config.retainRatio) {
+    return `自动压缩比例须高于原生保留比例 ${Math.round(config.retainRatio * 10000) / 100}%。`
+  }
+  for (const policy of config.modelPolicies) {
+    const retained = policy.retainTokens !== undefined ? undefined : policy.retainRatio ?? config.retainRatio
+    if (retained !== undefined && ratio <= retained) {
+      return `自动压缩比例须高于 ${policy.provider}/${policy.model} 的原生保留比例 ${Math.round(retained * 10000) / 100}%。`
+    }
+  }
+}
+
+/** The native resolver retains output reservations, headroom and all tail rules. */
+export function thresholdConfigSnapshot(config: ResolvedConfig, ratio: number): ResolvedConfig {
+  return Object.freeze({
+    ...config,
+    thresholdRatio: ratio,
+    modelPolicies: Object.freeze(config.modelPolicies.map(policy => Object.freeze({ ...policy, thresholdRatio: ratio }))),
+  })
+}
+
+/** Exact rc.5 policy guard, raised before pruning or a compaction transaction. */
+function nativeRetentionGuard(error: unknown): error is Error & { targetKey: string } {
+  if (!(error instanceof Error) || error.constructor.name !== 'TargetPressureConfigError') return false
+  const target = Reflect.get(error, 'targetKey')
+  return typeof target === 'string'
+    && error.message.startsWith(`BasicCompactionConfig: ${target} retainTokens (`)
+    && /retainTokens \(\d+\) must be less than threshold tokens \d+$/.test(error.message)
 }
 
 /**
  * Extend the native instances selected by web Agent presets. Their isolated
  * compaction services are intentionally invisible as root `ctx.compaction`.
- * Only the documented summarize customization point is decorated; prototypes,
- * service registrations, preset documents and LLM routing are preserved.
+ * Decorate the summary hook and automatic policy entry point; prototypes,
+ * native configuration, registrations and LLM routing are preserved.
  */
-export function registerCompressionBridge(ctx: Context, getConfig: () => Pick<ConfigData, 'compression'>): () => void {
+export function registerCompressionBridge(ctx: Context, getConfig: () => Pick<ConfigData, 'compression'>,
+  options: CompressionBridgeOptions = {}): () => void {
   const restorers = new Map<object, () => void>()
   let active = true
   const bind = (value: unknown) => {
@@ -190,9 +228,12 @@ export function registerCompressionBridge(ctx: Context, getConfig: () => Pick<Co
     const ownerCtx = Object.getOwnPropertyDescriptor(engine, 'ctx')?.value as Context | undefined
     if (!ownerCtx) return
     const own = Object.getOwnPropertyDescriptor(engine, 'summarize')
-    if (own && !own.configurable) return
+    const pressureOwn = Object.getOwnPropertyDescriptor(engine, 'compactIfNeeded')
+    if (own && !own.configurable || pressureOwn && !pressureOwn.configurable) return
     const original = engine.summarize
+    const originalPressure = engine.compactIfNeeded
     if (typeof original !== 'function') return
+    if (typeof originalPressure !== 'function') return
     const wrapper: NativeSummaryHook['summarize'] = function (this: NativeSummaryHook, input, agent, signal) {
       const { provider, model } = active ? getConfig().compression : { provider: '', model: '' }
       if (!provider && !model) return original.call(this, input, agent, signal)
@@ -204,12 +245,49 @@ export function registerCompressionBridge(ctx: Context, getConfig: () => Pick<Co
     Object.defineProperty(engine, 'summarize', {
       configurable: true, writable: true, enumerable: own?.enumerable ?? false, value: wrapper,
     })
+    const warnedRatios = new Set<number>()
+    const pressureWrapper: NativeSummaryHook['compactIfNeeded'] = function (this: NativeSummaryHook, agent, trigger, signal) {
+      const ratio = active ? getConfig().compression.thresholdRatio : null
+      if (ratio === null || ratio === undefined || trigger !== 'pressure') return originalPressure.call(this, agent, trigger, signal)
+      const problem = thresholdRetentionProblem(this.config, ratio)
+      if (problem) {
+        if (!warnedRatios.has(ratio)) {
+          warnedRatios.add(ratio)
+          ownerCtx.logger.warn(`${problem} 当前引擎继续使用原生自动压缩策略。`)
+        }
+        return originalPressure.call(this, agent, trigger, signal)
+      }
+      // The supported rc.5 entry point reads policy from this.config before its
+      // first await. A per-call receiver gives it one immutable override while
+      // keeping native instance fields/caches and transaction methods intact.
+      const receiver = Object.create(this) as NativeSummaryHook
+      Object.defineProperty(receiver, 'config', { value: thresholdConfigSnapshot(this.config, ratio) })
+      return originalPressure.call(receiver, agent, trigger, signal).catch((error: unknown) => {
+        // An absolute native retainTokens budget needs model capacity before
+        // its compatibility is knowable. Only this pre-transaction native guard
+        // retries with the original policy; summary/commit errors propagate.
+        if (signal.aborted || !nativeRetentionGuard(error)) throw error
+        if (!warnedRatios.has(ratio)) {
+          warnedRatios.add(ratio)
+          ownerCtx.logger.warn('原生固定保留长度无法满足该触发比例，当前检查继续使用原生自动压缩策略。')
+        }
+        return originalPressure.call(this, agent, trigger, signal)
+      })
+    }
+    Object.defineProperty(engine, 'compactIfNeeded', {
+      configurable: true, writable: true, enumerable: pressureOwn?.enumerable ?? false, value: pressureWrapper,
+    })
     restorers.set(engine, () => {
       // A later extension keeps ownership. A retained wrapper delegates to the
       // prior hook after this bridge has been disposed.
-      if (Object.getOwnPropertyDescriptor(engine, 'summarize')?.value !== wrapper) return
-      if (own) Object.defineProperty(engine, 'summarize', own)
-      else delete (engine as Partial<NativeSummaryHook>).summarize
+      if (Object.getOwnPropertyDescriptor(engine, 'summarize')?.value === wrapper) {
+        if (own) Object.defineProperty(engine, 'summarize', own)
+        else delete (engine as Partial<NativeSummaryHook>).summarize
+      }
+      if (Object.getOwnPropertyDescriptor(engine, 'compactIfNeeded')?.value === pressureWrapper) {
+        if (pressureOwn) Object.defineProperty(engine, 'compactIfNeeded', pressureOwn)
+        else delete (engine as Partial<NativeSummaryHook>).compactIfNeeded
+      }
     })
   }
   const bindAgent = (agent: Agent) => bind(ctx.agentPresets.serviceFor(agent, 'compaction'))
@@ -227,14 +305,29 @@ export function registerCompressionBridge(ctx: Context, getConfig: () => Pick<Co
   ]
   const root = ctx.inject(['compaction'], nativeCtx => { bind(nativeCtx.compaction) })
   scan()
+  let unregisterValidator: (() => void) | undefined
+  const validateThreshold = (ratio: number | null) => {
+    if (ratio === null) return
+    for (const value of restorers.keys()) {
+      const engine = value as NativeSummaryHook
+      const owner = Object.getOwnPropertyDescriptor(engine, 'ctx')?.value as Context | undefined
+      // Native engines retained by a retired/disposed preset are no longer
+      // policy targets. A future engine is checked when its pressure runs.
+      if (!engine.config || owner?.fiber.state !== 2) continue
+      const problem = thresholdRetentionProblem(engine.config, ratio)
+      if (problem) throw new Error(problem)
+    }
+  }
   const dispose = () => {
     if (!active) return
     active = false
     for (const disposeListener of disposers) disposeListener()
+    unregisterValidator?.()
     void root.dispose()
     for (const restore of restorers.values()) restore()
     restorers.clear()
   }
   ctx.effect(() => dispose, 'context-recall: native compaction hooks')
+  unregisterValidator = options.registerThresholdValidator?.(validateThreshold)
   return dispose
 }

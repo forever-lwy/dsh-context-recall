@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-recall",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Context compaction with global model settings and hybrid history recall using online embeddings for DSH rc.5",
   "type": "module",
   "main": "lib/index.js",
