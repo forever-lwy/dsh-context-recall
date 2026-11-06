@@ -53,7 +53,7 @@ test('actual bundle composes without warnings and leaves native query/controller
     assert.deepEqual(resultRows.find(row => row.id === id), originalRows.find(row => row.id === id),
       `Installing recall must not restart or replace the native ${id} provider.`)
   }
-  const contribution = resultRows.filter(row => row.name === 'dsh-context-recall')
+  const contribution = resultRows.filter(row => row.name === '@forever-lwy/dsh-context-recall')
   assert.equal(contribution.length, 1)
   assert.notEqual(contribution[0].disabled, true)
   const boundary = after.find(row => row.id === 'context-recall-scope')
@@ -62,7 +62,7 @@ test('actual bundle composes without warnings and leaves native query/controller
   const privateQuery = boundary.config.find(row => row.name === '@deepseek-ai/dsh-session-query-sqlite')
   assert.ok(privateQuery)
   assert.equal(privateQuery.config.openAt, 'first-search')
-  assert.ok(boundary.config.some(row => row.name === 'dsh-context-recall'))
+  assert.ok(boundary.config.some(row => row.name === '@forever-lwy/dsh-context-recall'))
 })
 
 test('web host compaction is disabled while every shipped preset owns its isolated native engine', () => {
@@ -126,7 +126,7 @@ test('bundle private query remains isolated through actual Loader activation and
     group.config.find(row => row.name === '@deepseek-ai/dsh-session-query-sqlite').config.path = ':memory:'
     // A service witness replaces only the feature entry; the group, isolation
     // declaration and concrete query module come from the shipped bundle.
-    group.config.find(row => row.name === 'dsh-context-recall').name = 'cordis:queryWitness'
+    group.config.find(row => row.name === '@forever-lwy/dsh-context-recall').name = 'cordis:queryWitness'
     for (let cycle = 0; cycle < 2; cycle++) {
       stage = `group update ${cycle}`
       await ctx.loader.root.update([structuredClone(group)])

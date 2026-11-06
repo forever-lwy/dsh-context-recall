@@ -13,4 +13,4 @@
             path: !!js dshHomePath('storages/context-recall-fulltext.db')
             openAt: first-search
         - id: context-recall
-          name: dsh-context-recall
+          name: '@forever-lwy/dsh-context-recall'

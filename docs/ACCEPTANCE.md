@@ -3,7 +3,7 @@
 适用版本：dsh `0.2.1-rc.5`，插件 `0.1.2`。
 本流程由用户主动安装版本后执行，开发脚本不会自动操作常用实例。
 
-1. 在插件管理器安装 `/plugins/releases/dsh-context-recall-0.1.2.tgz` 并启用。
+1. 在插件管理器安装 `github:forever-lwy/dsh-context-recall`（默认分支 `release` 的预构建版本）并启用。
    按实际界面的加载状态判断是否需要重启。
 2. 复核实时插件清单：回忆主入口、私有全文查询、`session-controller` 应为 `active`；
    `session/modelCatalog` 应能读取。根层原生 `compaction-basic` 在 Web 中保持禁用是正常的，

@@ -4,16 +4,19 @@
 以 [dsh-recall 0.2.2](https://github.com/Relistencode/dsh-recall/tree/225b940b7a361e57d9ddb495e04cef2580539d08)
 为基础，适配当前会话 API，加入全局压缩模型与触发比例、在线向量和完整 GUI 设置。
 
-## 安装本地版本
+## 安装
 
-在 dsh 界面 **插件 → 添加插件** 输入：
+在 DSH「插件 → 添加插件」输入下面的来源，确认安装并启用：
 
 ```text
-/plugins/releases/dsh-context-recall-0.1.3.tgz
+github:forever-lwy/dsh-context-recall
 ```
 
-由用户确认安装、启用。按界面反馈处理；仅当明确显示 `restart-required` 时再安排重启。
-源码目录不是安装源，不使用 `link:`，不直接修改运行实例的依赖。
+仓库默认分支是 `release`，其中每个提交都是某次发版的源码加上构建好的 `lib/`，并去掉了 `prepare`，所以安装时不装 devDependencies、不构建。dshmarket 按默认分支上 `package.json` 的版本号判断是否有更新，点击更新时安装 `release` 的最新提交。不要安装 `master`：它只有源码，安装时会靠 `prepare` 拉全部 devDependencies 现场构建。
+
+包名自 0.1.4 起为 `@forever-lwy/dsh-context-recall`，以免与 npm 和插件市场目录里的同名插件混淆。从旧的 `dsh-context-recall` 版本包迁移时，先卸载旧的 `dsh-context-recall`，再安装上面的来源；两者注册同一宿主行，不能同时安装。宿主行 id 和设置命名空间不变。
+
+迁移后已有模型、向量配置、密钥和索引沿用：设置在 `storages/context-recall-settings.json`，索引在 `storages/context-recall-fulltext.db`，都与包名无关。
 如已安装原版 `dsh-recall`，先由用户在界面停用它，避免重复注册同名 `recall` 工具。
 
 插件在自己的隔离组中加载官方按需全文索引，不修改应用共享查询服务或 SessionController。
@@ -22,12 +25,7 @@
 原生不可变配置与类原型均保留；每次自动检查使用独立的策略快照。停用插件时恢复原实例的方法。
 自行实现且不继承 `BasicCompactionEngine` 的其他压缩后端不在此覆盖范围。
 
-从 0.1.1 升级时，在添加插件中输入上面的新路径并确认安装，已有模型、向量配置、密钥和索引沿用。
-新增比例默认“沿用 dsh 原生压缩策略”，读取旧配置不会改写文件或修订号。
-如从 0.1.0 直接升级，由于旧版曾改动共享查询提供方，升级时原生查询配置
-会恢复部署原有值；这一轮升级完成后应检查 SessionController 的实时状态与会话接口。
-如果当前控制器仍处于 `failed`，需要在保存工作后由用户确认恢复操作或重启；
-单纯刷新页面、重复保存已启用标志不会自动重试一个失败的服务。
+是否需要重启以安装界面提示为准。不要用 `link:`、目录依赖或模块路径把源码目录接入常用 profile。
 
 ## GUI 配置
 
@@ -117,12 +115,12 @@ npm ci
 npm run check
 npm run build
 npm test
-npm pack --pack-destination ../releases
 ```
 
-Git 安装可通过 `prepare` 在独立安装环境构建；依赖不引用临时上游目录。
-发布 Git 来源时固定完整 commit SHA，由用户决定是否推送和发布索引。
+依赖不引用临时上游目录。需要离线备用的本地版本包时运行 `npm pack --pack-destination ../releases`，每版使用新的版本号和文件名。
 测试使用临时目录、内存 SQLite、真实 rc.5 服务和模拟上游，不读取实际会话或使用生产模型凭据。
 只有用户在日常界面安装和配置后，才能完成真实浏览器与实际模型的最终联调。
+
+发版：在 `master` 上开发和推送不会触发任何构建。改完后递增 `package.json` 版本并提交，打同名标签并推送，例如 `git tag v0.1.4 && git push origin master v0.1.4`。GitHub Actions（`.github/workflows/release.yml`）只在 `v*` 标签推送时运行：检查标签与版本一致，按 lockfile `npm ci`，由 `scripts/release.mjs` 构建、测试，在 `release` 分支上追加一个发布提交（源码加 `lib/`，去掉 `prepare`；父提交是上一个发布提交和该标签的源码提交）并推送。`release` 已有同一或更高版本时会拒绝发版。`npm run release` 可在本地对已打标签的提交生成同样的发布提交（不推送）。
 
 MIT，来源见 [THIRD_PARTY.md](THIRD_PARTY.md)。

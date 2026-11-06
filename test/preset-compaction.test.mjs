@@ -204,7 +204,7 @@ test('actual main bundle in its private-query group drives existing and future p
   const originalEngine = ctx.agentPresets.serviceFor(existing, 'compaction')
   assert.equal(Object.hasOwn(originalEngine, 'summarize'), false)
   const originalImport = ctx.loader.import.bind(ctx.loader)
-  ctx.loader.import = (name, ...args) => name === 'dsh-context-recall' ? Plugin
+  ctx.loader.import = (name, ...args) => name === '@forever-lwy/dsh-context-recall' ? Plugin
     : name === '@deepseek-ai/dsh-session-query-sqlite' ? { default: SessionQuerySqlite }
       : originalImport(name, ...args)
   ctx.provide('dshHomePath', path => join(directory, path))
@@ -212,7 +212,7 @@ test('actual main bundle in its private-query group drives existing and future p
   await ctx.loader.root.update(rows)
   await ctx.loader.await()
   assert.ok(Object.getOwnPropertyDescriptor(ctx.sessionQuery, 'config').value === nativeQueryConfig, 'bundle preserves the root query instance')
-  const main = [...ctx.loader.entries()].find(entry => entry.options.name === 'dsh-context-recall')
+  const main = [...ctx.loader.entries()].find(entry => entry.options.name === '@forever-lwy/dsh-context-recall')
   assert.equal(main.fiber.state, 2)
   assert.ok(Object.getOwnPropertyDescriptor(main.fiber.ctx.sessionQuery, 'config').value !== nativeQueryConfig, 'main owns an isolated query service')
   assert.equal(Object.hasOwn(originalEngine, 'summarize'), true, 'main activation reaches the pre-existing preset instance')

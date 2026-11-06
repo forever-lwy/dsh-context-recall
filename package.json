@@ -1,6 +1,6 @@
 {
-  "name": "dsh-context-recall",
-  "version": "0.1.3",
+  "name": "@forever-lwy/dsh-context-recall",
+  "version": "0.1.4",
   "description": "Context compaction with global model settings and hybrid history recall using online embeddings",
   "type": "module",
   "main": "lib/index.js",
@@ -20,6 +20,10 @@
     "docs"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/forever-lwy/dsh-context-recall.git"
+  },
   "engines": {
     "node": ">=22.13",
     "dsh": "*"
@@ -28,7 +32,8 @@
     "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --test-isolation=none test/*.test.mjs",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "zod": "4.4.3"

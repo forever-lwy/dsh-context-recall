@@ -41,7 +41,7 @@ test('bundle owns an isolated search service and leaves all native query/control
   assert.equal(scope?.group, true)
   assert.equal(scope?.isolate.sessionQuery, true)
   assert.ok(scope.config.some(row => row.name === '@deepseek-ai/dsh-session-query-sqlite' && row.id !== 'session-query-sqlite'))
-  assert.ok(scope.config.some(row => row.name === 'dsh-context-recall'))
+  assert.ok(scope.config.some(row => row.name === '@forever-lwy/dsh-context-recall'))
 })
 
 class CatalogAdapter extends LlmAdapter {
@@ -110,13 +110,13 @@ test('enabling and disabling the real isolated bundle preserves native SessionCo
     const originalImport = loader.import.bind(loader)
     // Keep production module identities, replacing only bare module resolution
     // with these already imported, exact rc.5 exports in the isolated test host.
-    loader.import = (name, ...args) => name === 'dsh-context-recall' ? Plugin
+    loader.import = (name, ...args) => name === '@forever-lwy/dsh-context-recall' ? Plugin
       : name === '@deepseek-ai/dsh-session-query-sqlite' ? { default: SessionQuerySqlite } : originalImport(name, ...args)
     ctx.provide('dshHomePath', path => join(directory, path))
     const rows = composeEntries([loadOverlayPatches('activation-test', patchFile)])
     await loader.root.update(rows)
     await loader.await()
-    const main = [...loader.entries()].find(entry => entry.options.name === 'dsh-context-recall')
+    const main = [...loader.entries()].find(entry => entry.options.name === '@forever-lwy/dsh-context-recall')
     assert.equal(main?.fiber?.state, 2)
     assert.ok(implementation(main.fiber.ctx.sessionQuery) !== nativeQuery, 'recall query must have its own service instance')
     assert.ok(implementation(ctx.sessionQuery) === nativeQuery, 'native query identity must stay unchanged')
@@ -195,7 +195,7 @@ test('session controller reloads with recall installed; HTTP list/create work wi
     loader.builtins.group = Group
     await new Promise(resolve => setImmediate(resolve))
     const originalImport = loader.import.bind(loader)
-    loader.import = (name, ...args) => name === 'dsh-context-recall' ? Plugin
+    loader.import = (name, ...args) => name === '@forever-lwy/dsh-context-recall' ? Plugin
       : name === '@deepseek-ai/dsh-session-query-sqlite' ? { default: SessionQuerySqlite }
         : name === '@deepseek-ai/dsh-api-session-controller' ? { default: SessionController }
           : name === '@deepseek-ai/dsh-client-file-upload' ? { default: FileUploads }

@@ -188,7 +188,7 @@ test('built browser artifact registers a complete settings page and minimal loca
   let artifact
   window.__ModuleLoader__ = {load:value => {artifact=value}}
   runInThisContext(source)
-  assert.equal(artifact.id,'dsh-context-recall')
+  assert.equal(artifact.id,'@forever-lwy/dsh-context-recall')
   const plugin = artifact.factory(createRequire(import.meta.url))
   assert.deepEqual(plugin.inject,['slots','locale','remote'])
   const entries=[], dictionaries=[], cleanups=[]

@@ -22,7 +22,7 @@ const method = (input: z.ZodType, output: z.ZodType) => ({
   parameters: [{name: 'request', source: 'json' as const, codec: codec(input, 'ContextRecallRequest'), strictCodec: codec(input, 'ContextRecallRequest')}],
   result: codec(output, 'ContextRecallResult'), cancellation: {parameter: 'signal' as const},
 })
-export const remoteInfo = createTypertRemoteInfo({package: 'dsh-context-recall', methods: {
+export const remoteInfo = createTypertRemoteInfo({package: '@forever-lwy/dsh-context-recall', methods: {
   'contextRecall/get': method(empty, viewSchema),
   'contextRecall/save': method(saveSchema, viewSchema),
   'contextRecall/test': method(testSchema, testResultSchema),
