@@ -14,6 +14,8 @@ import { SessionStore, SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { SqliteSessionQueryEngine } from '@deepseek-ai/dsh-session-query-sqlite'
 import { AgentRegistry } from '@deepseek-ai/dsh-agent'
+import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import { TypertRegistry } from '@deepseek-ai/dsh-typert-registry'
@@ -27,7 +29,7 @@ function officialLayers() {
   return ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'].flatMap(name => {
     const manifestPath = require.resolve(name + '/package.json')
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    assert.equal(manifest.version, '0.2.1-rc.5')
+    assert.equal(manifest.version, '0.2.2-rc.1')
     const patches = manifest.dsh.bundle.patch
     return (Array.isArray(patches) ? patches : [patches]).map(path =>
       loadOverlayPatches('context-recall-test', resolve(dirname(manifestPath), path)))
@@ -164,10 +166,12 @@ test('actual bundled feature publishes recall and global GUI service from inside
       resolve: async () => undefined,
     })
     await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(LlmRuntime)
     await ctx.plugin(SystemPrompt, {includeHarnessIdentity: false, includeRuntimeContext: false})
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SqliteSessionQueryEngine, {path: ':memory:', openAt: 'never'})
     const hostProvider = () => ctx.reflect.store[ctx.root[Context.isolate].sessionQuery]
     const originalProvider = hostProvider()

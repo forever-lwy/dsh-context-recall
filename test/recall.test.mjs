@@ -8,6 +8,7 @@ import { SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
 import { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 const message = (seq, text, type = 'user/message') => ({ seq, type, time: 1000 + seq,
@@ -191,7 +192,7 @@ test('real rc.5 query/persistence reads and system prompt assembly honor ported 
   }
   const fuzzy = new FuzzyIndex(':memory:').open()
   try {
-    const fibers = [ctx.plugin(SessionStore), ctx.plugin(ReadOnlyPersistence), ctx.plugin(SessionQueryEngine), ctx.plugin(SystemPrompt), ctx.plugin(ToolRuntime)]
+    const fibers = [ctx.plugin(SessionStore), ctx.plugin(ReadOnlyPersistence), ctx.plugin(SessionQueryEngine), ctx.plugin(SystemPrompt), ctx.plugin(ToolRuntime), ctx.plugin(NativeToolExecutor)]
     await Promise.all(fibers.map(fiber => fiber.await()))
     const live = ctx.sessions.create(SessionId('live-recall'), { meta: { cwd: '/work/live' } })
     live.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '实时会话数据库内容' }] }), { surfaceOp: 'append' })

@@ -144,7 +144,7 @@ test('enabling and disabling the real isolated bundle preserves native SessionCo
   }
 })
 
-test('native FileUploads resolver survives controller reload; provider reset recovers HTTP list/create without changing history', async () => {
+test('session controller reloads with recall installed; HTTP list/create work without changing history', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'context-recall-controller-recovery-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = directory
@@ -216,23 +216,19 @@ test('native FileUploads resolver survives controller reload; provider reset rec
     await loader.await()
     await loader.update('session-controller', { disabled: false })
     await loader.await()
-    const failed = loader.resolve('session-controller').fiber
-    await assert.rejects(failed.await(), /file-upload: Agent resolver is already registered/)
-    assert.equal(ctx.get('sessionController'), undefined)
-    assert.equal((await rpc('session/modelCatalog', {}, true)).unavailable, true)
+    // 0.2.2 fixed the rc.5 duplicate file-upload resolver: a controller-only
+    // reload now recovers by itself, with and without the recall bundle.
+    assert.equal(loader.resolve('session-controller').fiber.state, 2)
+    assert.equal(unwrapReply(await rpc('session/modelCatalog')).groups[0].models[0].id, 'small')
     const bundleRows = composeEntries([loadOverlayPatches('recovery-test', patchFile)])
     await loader.root.update([...nativeRows, ...bundleRows])
     await loader.await()
-    assert.equal(loader.resolve('session-controller').fiber, failed)
-    assert.equal(ctx.get('sessionController'), undefined, 'installing the repaired bundle does not implicitly reset an unrelated failed row')
+    assert.equal(loader.resolve('session-controller').fiber.state, 2)
     await loader.root.update(nativeRows)
     await loader.await()
-    assert.equal(loader.resolve('session-controller').fiber, failed)
-    assert.equal(ctx.get('sessionController'), undefined, 'disabling recall alone cannot repair the already failed controller')
     for (const { session, events } of retained) assert.deepEqual(session.snapshotEvents(), events)
 
-    // A controller-only retry cannot clear another service's retained resolver.
-    // Reset its provider first, using the same entry transitions as the manager.
+    // Resetting the file-upload provider (the rc.5 recovery path) stays harmless.
     await loader.update('session-controller', { disabled: true })
     await loader.await()
     await loader.update('file-upload', { disabled: true })

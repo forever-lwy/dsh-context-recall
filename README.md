@@ -1,6 +1,6 @@
 # dsh-context-recall
 
-面向 **DeepSeek Harness 0.2.1-rc.5** 的上下文压缩与历史回忆插件。
+面向 **DeepSeek Harness**（当前在 `0.2.2-rc.1` 上构建测试，不按 dsh 版本拦截加载） 的上下文压缩与历史回忆插件。
 以 [dsh-recall 0.2.2](https://github.com/Relistencode/dsh-recall/tree/225b940b7a361e57d9ddb495e04cef2580539d08)
 为基础，适配当前会话 API，加入全局压缩模型与触发比例、在线向量和完整 GUI 设置。
 
@@ -9,7 +9,7 @@
 在 dsh 界面 **插件 → 添加插件** 输入：
 
 ```text
-/plugins/releases/dsh-context-recall-0.1.2.tgz
+/plugins/releases/dsh-context-recall-0.1.3.tgz
 ```
 
 由用户确认安装、启用。按界面反馈处理；仅当明确显示 `restart-required` 时再安排重启。

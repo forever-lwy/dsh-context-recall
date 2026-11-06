@@ -8,6 +8,8 @@ import { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { SessionStore, SessionId } from '@deepseek-ai/dsh-session'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
+import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { LlmRuntime, LlmAdapter, createUserMessage } from '@deepseek-ai/dsh-llm'
 import * as Plugin from '../lib/index.js'
 import { ContextRecallCompaction } from '../lib/compaction.js'
@@ -44,9 +46,11 @@ test('actual Cordis loads recall and replacement compaction as siblings, routes 
     })
     fibers.push(await ctx.plugin(LlmRuntime))
     fibers.push(await ctx.plugin(SessionStore))
+    fibers.push(await ctx.plugin(SessionProjectionRegistry))
     fibers.push(await ctx.plugin(AgentRegistry))
     fibers.push(await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false, includeRuntimeContext: false }))
     fibers.push(await ctx.plugin(ToolRuntime))
+    fibers.push(await ctx.plugin(NativeToolExecutor))
     ctx.llm.registerAdapter(['test-summary-provider'], new TestAdapter())
     ctx.provide('tokenMeter', {
       measure: session => ({ nodes: session.surface.nodes.map(seq => ({ seq, tokens: 1000, heuristicTokens: 1000 })), totalTokens: session.surface.nodes.length * 1000 }),
