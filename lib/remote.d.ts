@@ -34,6 +34,16 @@ export declare const viewSchema: z.ZodObject<{
             anchorRounds: z.ZodDefault<z.ZodNumber>;
             limit: z.ZodDefault<z.ZodNumber>;
             context: z.ZodDefault<z.ZodNumber>;
+            crossSession: z.ZodDefault<z.ZodEnum<{
+                off: "off";
+                "when-asked": "when-asked";
+                autonomous: "autonomous";
+            }>>;
+            readOther: z.ZodDefault<z.ZodEnum<{
+                off: "off";
+                "when-asked": "when-asked";
+                allowed: "allowed";
+            }>>;
         }, z.core.$strict>>;
     }, z.core.$strict>;
     revision: z.ZodNumber;
@@ -85,6 +95,16 @@ export declare const saveSchema: z.ZodObject<{
             anchorRounds: z.ZodDefault<z.ZodNumber>;
             limit: z.ZodDefault<z.ZodNumber>;
             context: z.ZodDefault<z.ZodNumber>;
+            crossSession: z.ZodDefault<z.ZodEnum<{
+                off: "off";
+                "when-asked": "when-asked";
+                autonomous: "autonomous";
+            }>>;
+            readOther: z.ZodDefault<z.ZodEnum<{
+                off: "off";
+                "when-asked": "when-asked";
+                allowed: "allowed";
+            }>>;
         }, z.core.$strict>>;
     }, z.core.$strict>;
     expectedRevision: z.ZodNumber;
@@ -125,6 +145,16 @@ export declare const testSchema: z.ZodObject<{
             anchorRounds: z.ZodDefault<z.ZodNumber>;
             limit: z.ZodDefault<z.ZodNumber>;
             context: z.ZodDefault<z.ZodNumber>;
+            crossSession: z.ZodDefault<z.ZodEnum<{
+                off: "off";
+                "when-asked": "when-asked";
+                autonomous: "autonomous";
+            }>>;
+            readOther: z.ZodDefault<z.ZodEnum<{
+                off: "off";
+                "when-asked": "when-asked";
+                allowed: "allowed";
+            }>>;
         }, z.core.$strict>>;
     }, z.core.$strict>;
     apiKey: z.ZodOptional<z.ZodString>;
@@ -161,6 +191,8 @@ export declare const readSettings: (remote: any, signal?: AbortSignal) => Promis
             anchorRounds: number;
             limit: number;
             context: number;
+            crossSession: "off" | "when-asked" | "autonomous";
+            readOther: "off" | "when-asked" | "allowed";
         };
     };
     revision: number;
@@ -208,6 +240,8 @@ export declare const saveSettings: (remote: any, request: SaveRequest, signal?: 
             anchorRounds: number;
             limit: number;
             context: number;
+            crossSession: "off" | "when-asked" | "autonomous";
+            readOther: "off" | "when-asked" | "allowed";
         };
     };
     revision: number;

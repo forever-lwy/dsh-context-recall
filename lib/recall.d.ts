@@ -34,6 +34,23 @@ export function runRecall(sessionQuery: any, args: any, exec: any, services?: {}
     error?: undefined;
 }>;
 /**
+ * Title search across sessions (scope workspace by default, or all).
+ * Returns the same group shape as a coarse recall, without episodes.
+ */
+export function runTitleSearch(index: any, args: any, exec: any, config?: {}): {
+    ok: boolean;
+    error: string;
+    query?: undefined;
+    total?: undefined;
+    groups?: undefined;
+} | {
+    ok: boolean;
+    query: string;
+    total: any;
+    groups: any;
+    error?: undefined;
+};
+/**
  * Merge semantic and fuzzy hits (both score-sorted 0..1) by doc rowid,
  * keeping the best score per doc. Returns up to limit*2 candidates.
  */

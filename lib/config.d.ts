@@ -31,6 +31,16 @@ export declare const configSchema: z.ZodObject<{
         anchorRounds: z.ZodDefault<z.ZodNumber>;
         limit: z.ZodDefault<z.ZodNumber>;
         context: z.ZodDefault<z.ZodNumber>;
+        crossSession: z.ZodDefault<z.ZodEnum<{
+            off: "off";
+            "when-asked": "when-asked";
+            autonomous: "autonomous";
+        }>>;
+        readOther: z.ZodDefault<z.ZodEnum<{
+            off: "off";
+            "when-asked": "when-asked";
+            allowed: "allowed";
+        }>>;
     }, z.core.$strict>>;
 }, z.core.$strict>;
 export type ConfigData = z.infer<typeof configSchema>;

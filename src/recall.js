@@ -11,9 +11,9 @@
 // Registered per Cordis plugin convention: named exports { name, inject,
 // apply } — the loader mounts this package through a patch row
 // `- id: recall / name: dsh-recall`.
-import { defineTool } from '@deepseek-ai/dsh-tools'
 import { FuzzyIndex, recallIndexPath, stripText } from './fuzzy-index.js'
 import { IndexSync, EmbedQueue, createExclusive } from './index-sync.js'
+import { defineRecallTool } from './recall-tool.js'
 
 /** Semantic index is used only once at least this fraction of docs are embedded. */
 const SEMANTIC_READY_COVERAGE = 0.9
@@ -158,12 +158,16 @@ export async function runRecall(sessionQuery, args, exec, services = {}) {
           if (services.fuzzy.vectorCoverage() >= (services.config?.coverageThreshold ?? SEMANTIC_READY_COVERAGE)) {
             const qVec = await services.embedder.embed(query, services.signal)
             semHits = services.fuzzy.semanticSearch(qVec, limit * 3, { sessionId: fuzzySessionId, cwd: fuzzyCwd })
+            services.semanticReady = true
           }
         } catch {
           // semantic unavailable: fuzzy-only below
         }
       }
-      const fuzzyHits = services.fuzzy.search({ query, limit: limit * 3, sessionId: fuzzySessionId, cwd: fuzzyCwd })
+      if (services.semanticOnly && semHits.length === 0 && !services.semanticReady) {
+        return { ok: false, error: 'Semantic search is unavailable (online embeddings off, failing, or index coverage below the configured threshold). Use mode auto or keyword.' }
+      }
+      const fuzzyHits = services.semanticOnly ? [] : services.fuzzy.search({ query, limit: limit * 3, sessionId: fuzzySessionId, cwd: fuzzyCwd })
       const hits = mergeHits(semHits, fuzzyHits, limit)
       if (hits.length > 0) {
         const groups = await buildGroups(sessionQuery, hits, { limit, contextN, query, config: services.config, index: services.fuzzy })
@@ -345,6 +349,29 @@ async function detailSessionHits(sessionQuery, query, limit, sessionId, services
 }
 
 /**
+ * Title search across sessions (scope workspace by default, or all).
+ * Returns the same group shape as a coarse recall, without episodes.
+ */
+export function runTitleSearch(index, args, exec, config = {}) {
+  if (!index) return { ok: false, error: 'Title search needs the session index, which is unavailable.' }
+  const query = normText(args.query)
+  const limit = Math.floor(Math.min(Math.max(Number.isFinite(args.limit) ? args.limit : (config.limit ?? 10), 1), 50))
+  const agentCwd = exec?.agent?.session?.header?.cwd ?? null
+  const explicitCwd = typeof args.workspace === 'string' && args.workspace.trim() ? args.workspace.trim() : null
+  const cwd = args.scope === 'all' ? null : (explicitCwd || agentCwd)
+  if (args.scope !== 'all' && !cwd) return { ok: false, error: 'No current workspace; pass scope "all" or a workspace.' }
+  const rows = index.searchTitles({ query, limit, cwd: cwd ?? undefined })
+  const groups = rows.map(row => ({
+    sessionId: row.session_id,
+    title: row.title || undefined,
+    cwd: row.cwd || undefined,
+    createdAt: row.created_at ?? undefined,
+    updatedAt: row.updated_at ?? undefined,
+  }))
+  return { ok: true, query, total: groups.length, groups }
+}
+
+/**
  * Bring the index up to date before reading it: apply queued live events.
  * A broken index degrades the call to the official literal search.
  */
@@ -513,7 +540,7 @@ export async function buildAnchorText(sessionQuery, sessionId, summaryEvent) {
       // fragments unavailable; the summary alone still anchors the range
     }
   }
-  lines.push('以上为本会话被压缩区间的摘要与关键原文片段。需要精确原文时用 recall 工具下钻:detail:{sessionId, seq} 或 detail:{sessionId, browse:true}。')
+  lines.push(`以上为本会话被压缩区间的摘要与关键原文片段。需要精确原文时用 recall 工具读取:{"action":"read","sessionId":"${sessionId}","seq":<seq>}，或从某处翻页:{"action":"read","sessionId":"${sessionId}","fromSeq":<seq>}。`)
   return lines.join('\n')
 }
 
@@ -636,143 +663,6 @@ export function applyRecall(ctx, getConfig, getEmbedder, options = {}) {
     }).catch(() => {})
   })
 
-  ctx.tools.register(defineTool({
-    name: 'recall',
-    description: 'Search the original text of past conversations in DSH (like searching chat records in a messenger). Use it proactively whenever details from earlier turns are missing from your context — after context compaction, or when a decision, a setting, or a past discussion matters — and whenever the user mentions something from before. You do not need the user to ask for it.\n\nTWO STAGES (keeps tokens low): the default call is a light coarse recall — session titles, short snippets, and events (same-topic episodes: consecutive hits merged into [startSeq..endSeq] ranges, so repeated mentions of one topic arrive as one complete event instead of scattered fragments). Use it to locate the right session, then call again with detail:{sessionId} to list that session\'s hits, detail:{sessionId, seq} to open the exact original text around a message, or detail:{sessionId, browse:true, fromSeq: <event startSeq>} to read a whole event page by page until endSeq.\n\nSCOPE: by default this searches ONLY the current session. Do NOT broaden the scope on your own — searching other sessions or other projects happens only when the user explicitly asks (e.g. "check what the other window worked on", "look at the recall project", "search our history for ..."). Pass scope=workspace to search the current project or scope=all to search every session in those cases.\n\nPRESENTATION: the recall itself must be invisible. Never narrate the act of searching or remembering (\'let me recall\', \'I checked the history\', \'we discussed this before\') and never emit result scaffolding. Fold the recalled content directly into a normal, confident reply, exactly as if you always knew it — the user should not be able to tell that a search happened.',
-    parameters: {
-      query: {
-        type: 'string',
-        required: true,
-        description: 'The text to search for. Plain words are best; the search is literal (no fancy syntax).',
-      },
-      scope: {
-        type: 'string',
-        enum: ['session', 'workspace', 'all'],
-        description: 'Search scope. Default "session" (current session only). "workspace" searches the current project directory (or the directory given in `workspace`); "all" searches every session. Broaden the scope ONLY when the user explicitly asks.',
-      },
-      workspace: {
-        type: 'string',
-        description: 'Optional project directory to restrict a workspace-scoped search to (e.g. "F:\\AI\\DSH\\dsh-extension-hub"). Ignored for scope=session.',
-      },
-      limit: {
-        type: 'integer',
-        description: 'Maximum sessions to return (default 10, max 50).',
-      },
-      context: {
-        type: 'integer',
-        description: 'Events around the opened seq when using detail (default 3, max 10). Ignored by the coarse recall.',
-      },
-      detail: {
-        type: 'object',
-        additionalProperties: false,
-        description: 'Second stage: drill into one session\'s original text. detail:{sessionId} lists that session\'s hits; detail:{sessionId, seq, before, after} opens the exact original text window around a message; detail:{sessionId, browse:true, fromSeq, pageSize} pages through the session.',
-        properties: {
-          sessionId: { type: 'string', description: 'Session id from a previous coarse recall.' },
-          seq: { type: 'integer', description: 'Message seq to open its exact original window.' },
-          before: { type: 'integer', description: 'Events before seq (default 3, max 10).' },
-          after: { type: 'integer', description: 'Events after seq (default 3, max 10).' },
-          browse: { type: 'boolean', description: 'Page through the session starting at fromSeq.' },
-          fromSeq: { type: 'integer', description: 'First seq of the browse page (default 0).' },
-          pageSize: { type: 'integer', description: 'Browse page size (default 20, max 50).' },
-        },
-      },
-    },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          ok: { type: 'boolean', required: true },
-          error: { type: 'string' },
-          query: { type: 'string' },
-          total: { type: 'integer' },
-          groups: {
-            type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                sessionId: { type: 'string', required: true },
-                title: { type: 'string' },
-                cwd: { type: 'string' },
-                createdAt: { type: 'integer' },
-                hitTime: { type: 'integer' },
-                snippet: { type: 'string' },
-                events: {
-                  type: 'array',
-                  description: 'Same-topic episodes aggregated from this session\'s hits (consecutive hits ≤ 5 text blocks apart merge). Read the whole event with detail:{sessionId, browse:true, fromSeq: startSeq} until seq endSeq.',
-                  items: {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      startSeq: { type: 'integer', required: true },
-                      endSeq: { type: 'integer', required: true },
-                      hitCount: { type: 'integer' },
-                      snippet: { type: 'string' },
-                    },
-                  },
-                },
-                nextFromSeq: { type: 'integer', description: 'Browse mode only: first seq of the next page; absent when the log ended.' },
-                context: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      seq: { type: 'integer', required: true },
-                      type: { type: 'string', required: true },
-                      time: { type: 'integer' },
-                      text: { type: 'string' },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      render: (_args, value) => {
-        if (!value || value.ok === false) {
-          return [{ type: 'text', text: `Recall failed: ${value && value.error ? value.error : 'unknown error'}` }]
-        }
-        const lines = [`Recall "${value.query}": ${value.total} session(s) matched.`]
-        for (const g of value.groups || []) {
-          if (g.context && g.context.length > 0) {
-            // detail stage: render the original text itself
-            lines.push(`- ${g.title ? `${g.title} ` : ''}(${g.sessionId})`)
-            for (const c of g.context) {
-              lines.push(`  [${c.seq} ${c.type}] ${String(c.text || '')}`)
-            }
-            if (g.nextFromSeq !== undefined) lines.push(`  → next page from seq ${g.nextFromSeq}`)
-          } else {
-            lines.push(`- ${g.title ? `${g.title} ` : ''}(${g.sessionId}${g.cwd ? `, ${g.cwd}` : ''}) — ${g.snippet}`)
-            if (g.events && g.events.length > 1) {
-              lines.push(`  ${g.events.length} events: ${g.events.map((e) => `[${e.startSeq}..${e.endSeq}]×${e.hitCount}`).join(', ')}`)
-            }
-          }
-        }
-        return [{ type: 'text', text: lines.join('\n') }]
-      },
-    },
-    async execute(args, exec) {
-      // Index writes are serialized inside IndexSync; reads are synchronous
-      // SQLite calls, so queries need no queue of their own.
-      exec?.signal?.throwIfAborted()
-      if (disposed) return { ok: false, error: 'Recall plugin disposed' }
-      const sessionQuery = ctx.sessionQuery ?? ctx.get?.('sessionQuery')
-      if (!sessionQuery) return { ok: false, error: 'sessionQuery service unavailable' }
-      const services = servicesNow()
-      services.signal = exec?.signal
-      const result = await runRecall(sessionQuery, args, exec, services)
-      exec?.signal?.throwIfAborted()
-      return schemaValue(result)
-    },
-    presentCall: (args) => ({
-      card: 'generic',
-      title: 'Recall conversation history',
-      kind: 'other',
-      rawInput: args.query,
-    }),
-  }))
+  ctx.tools.register(defineRecallTool({ ctx, getConfig, servicesNow, isDisposed: () => disposed }))
   return handles
 }

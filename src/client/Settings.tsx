@@ -202,6 +202,19 @@ export function ContextRecallSettings(props: SettingsProps) {
           </div>
           {toggle('recall', 'anchor', 'anchor')}{field('recall', 'anchorRounds', 'anchorRounds', {min: 1, max: 20})}
         </fieldset>
+        <fieldset disabled={busy !== null}>
+          <legend>{t('access')}</legend><p className="dcr-hint">{t('accessHelp')}</p>
+          <div className="dcr-grid">
+            <label className="dcr-field"><span>{t('crossSession')}</span><select data-setting="recall.crossSession" value={draft.recall.crossSession}
+              onChange={event => update('recall', 'crossSession', event.target.value)}>
+              <option value="off">{t('accessOff')}</option><option value="when-asked">{t('accessWhenAsked')}</option><option value="autonomous">{t('accessAutonomous')}</option>
+            </select></label>
+            <label className="dcr-field"><span>{t('readOther')}</span><select data-setting="recall.readOther" value={draft.recall.readOther}
+              onChange={event => update('recall', 'readOther', event.target.value)}>
+              <option value="off">{t('accessOff')}</option><option value="when-asked">{t('accessWhenAsked')}</option><option value="allowed">{t('accessAllowed')}</option>
+            </select></label>
+          </div>
+        </fieldset>
         <p className="dcr-hint" role="status">{view.status.message}</p>
         <div className="dcr-actions"><button type="submit" data-action="save" disabled={busy !== null || !dirty}>{busy === 'save' ? t('saving') : t('save')}</button>
           <button type="button" data-action="reload" disabled={busy !== null} onClick={() => setLoadEpoch(value => value + 1)}>{t(dirty ? 'discard' : 'retry')}</button>

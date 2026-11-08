@@ -1,6 +1,6 @@
 {
   "name": "@forever-lwy/dsh-context-recall",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Context compaction with global model settings and hybrid history recall using online embeddings",
   "type": "module",
   "main": "lib/index.js",

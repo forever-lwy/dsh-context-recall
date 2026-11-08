@@ -114,17 +114,35 @@ github:forever-lwy/dsh-context-recall
 已打开的会话和随后创建的会话均能使用设置；原生后端热加载后会重新绑定。
 单独停用回忆条目时恢复原生摘要路径，不会停用压缩后端。
 
-## 工具用法
+## 工具用法（0.3.0 起）
 
-模型使用 `recall` 工具。默认只查当前会话，跨会话需用户明确请求。
+模型只看到一个 `recall` 入口工具，常驻定义约 2KB（0.2.x 约 3.7KB）。深入查看的用法不写在描述里，
+而是跟着结果返回：每次检索结果末尾都附有下一步该怎么调用。
 
 ```json
 {"query":"之前决定的模型参数"}
-{"query":"部署方式","scope":"workspace"}
-{"query":"关键词","detail":{"sessionId":"上次返回的ID"}}
-{"query":"关键词","detail":{"sessionId":"ID","seq":42,"before":3,"after":3}}
-{"query":"关键词","detail":{"sessionId":"ID","browse":true,"fromSeq":42,"pageSize":20}}
+{"query":"部署方式","mode":"title"}
+{"query":"部署方式","scope":"workspace","userRequest":"看看另一个窗口里的部署方式"}
+{"query":"关键词","sessionId":"会话ID"}
+{"action":"read","sessionId":"会话ID","seq":42}
+{"action":"read","sessionId":"会话ID","fromSeq":42,"limit":20}
 ```
+
+- `mode`：`auto`（默认，关键词与语义混合）、`keyword`（只用关键词，不调用向量服务）、
+  `semantic`（只用语义，向量不可用时明确报错）、`title`（检索会话标题）。
+- `scope`：`session`（默认，当前会话）、`workspace`（当前工作区）、`all`（全部会话）。
+  标题检索默认在当前工作区内进行。
+
+### AI 访问其他会话
+
+在 **设置 → 上下文压缩与回忆 → AI 访问其他会话** 中配置，插件在每次调用时强制检查，不只靠工具说明约束：
+
+| 设置 | 不允许 | 在我要求时（默认） | 自主 |
+| --- | --- | --- | --- |
+| 搜索其他会话（含标题检索） | 一律拒绝 | 需在 `userRequest` 中引用你最近 3 条消息里的原话，插件核对后放行 | AI 可自行搜索 |
+| 读取指定的其他会话原文 | 一律拒绝 | 同上 | AI 可自行读取 |
+
+当前会话的检索和读取始终可用。原话核对会忽略空白和标点，至少需要 2 个字；编造的原话会被拒绝。
 
 ## 开发与验证
 
