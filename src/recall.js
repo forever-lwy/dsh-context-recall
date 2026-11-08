@@ -13,6 +13,7 @@
 // `- id: recall / name: dsh-recall`.
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { FuzzyIndex, recallIndexPath, stripText } from './fuzzy-index.js'
+import { IndexSync, EmbedQueue, createExclusive } from './index-sync.js'
 
 /** Semantic index is used only once at least this fraction of docs are embedded. */
 const SEMANTIC_READY_COVERAGE = 0.9
@@ -137,17 +138,7 @@ export async function runRecall(sessionQuery, args, exec, services = {}) {
   }
 
   // ── fuzzy index path (primary; degrades to the official literal search) ──
-  if (services.fuzzy) {
-    try {
-      await services.fuzzy.reconcile({
-        live: services.live,
-        snapshots: services.snapshots,
-        inspect: services.inspect,
-      })
-    } catch (error) {
-      services.fuzzy = null
-    }
-  }
+  await prepareIndex(services)
   if (services.fuzzy) {
     try {
       // Semantic layer: incremental asynchronous online warm-up, then — once
@@ -175,7 +166,7 @@ export async function runRecall(sessionQuery, args, exec, services = {}) {
       const fuzzyHits = services.fuzzy.search({ query, limit: limit * 3, sessionId: fuzzySessionId, cwd: fuzzyCwd })
       const hits = mergeHits(semHits, fuzzyHits, limit)
       if (hits.length > 0) {
-        const groups = await buildGroups(sessionQuery, hits, { limit, contextN, query, config: services.config })
+        const groups = await buildGroups(sessionQuery, hits, { limit, contextN, query, config: services.config, index: services.fuzzy })
         return { ok: true, query, total: groups.length, groups }
       }
     } catch {
@@ -237,13 +228,7 @@ async function runDetail(sessionQuery, query, limit, contextN, detail, services)
   if (detail.browse === true) {
     const fromSeq = Number.isFinite(detail.fromSeq) ? Math.max(0, Math.floor(detail.fromSeq)) : 0
     const pageSize = Math.min(Math.max(Number.isFinite(detail.pageSize) ? detail.pageSize : 20, 1), 50)
-    if (services.fuzzy) {
-      try {
-        await services.fuzzy.reconcile({ live: services.live, snapshots: services.snapshots, inspect: services.inspect })
-      } catch {
-        services.fuzzy = null
-      }
-    }
+    await prepareIndex(services)
     if (services.fuzzy) {
       try {
         const { rows, nextFromSeq } = services.fuzzy.browse(sessionId, fromSeq, pageSize)
@@ -318,13 +303,7 @@ async function runDetail(sessionQuery, query, limit, contextN, detail, services)
 
 /** All hits inside one explicit session (semantic ∪ fuzzy, official fallback). */
 async function detailSessionHits(sessionQuery, query, limit, sessionId, services) {
-  if (services.fuzzy) {
-    try {
-      await services.fuzzy.reconcile({ live: services.live, snapshots: services.snapshots, inspect: services.inspect })
-    } catch {
-      services.fuzzy = null
-    }
-  }
+  await prepareIndex(services)
   if (services.fuzzy) {
     try {
       let semHits = []
@@ -363,6 +342,19 @@ async function detailSessionHits(sessionQuery, query, limit, sessionId, services
     created_at: null,
     score: 1,
   }))
+}
+
+/**
+ * Bring the index up to date before reading it: apply queued live events.
+ * A broken index degrades the call to the official literal search.
+ */
+async function prepareIndex(services) {
+  if (!services.fuzzy) return
+  try {
+    if (services.sync) await services.sync.flush()
+  } catch {
+    services.fuzzy = null
+  }
 }
 
 /**
@@ -448,12 +440,14 @@ export function buildEvents(hits, query, config = {}) {
  * the original text when needed). Hits of one session are additionally
  * aggregated into same-topic events (see buildEvents).
  */
-async function buildGroups(sessionQuery, hits, { limit, query, config }) {
+async function buildGroups(sessionQuery, hits, { limit, query, config, index }) {
   const bySession = new Map()
   for (const hit of hits) {
     if (!bySession.has(hit.session_id)) bySession.set(hit.session_id, [])
     bySession.get(hit.session_id).push(hit)
   }
+  let meta = new Map()
+  try { if (index) meta = index.sessionsMeta([...bySession.keys()]) } catch { /* titles fall back to the host */ }
   const groups = []
   for (const [hitSessionId, sessionHits] of bySession) {
     if (groups.length >= limit) break
@@ -468,35 +462,19 @@ async function buildGroups(sessionQuery, hits, { limit, query, config }) {
       context: [],
     }
     if (events.length > 0) group.events = events
-    try {
-      const title = await sessionQuery.readTitle(hitSessionId)
-      if (title && typeof title.title === 'string') group.title = title.title
-    } catch {
-      // title unavailable; keep the group without one
+    const indexedTitle = meta.get(hitSessionId)?.title
+    if (indexedTitle) group.title = indexedTitle
+    else {
+      try {
+        const title = await sessionQuery.readTitle(hitSessionId)
+        if (title && typeof title.title === 'string') group.title = title.title
+      } catch {
+        // title unavailable; keep the group without one
+      }
     }
     groups.push(group)
   }
   return groups
-}
-
-/** Background warm-up tick: embed a bounded batch, yield between chunks. */
-async function warmupTick(embedder, fuzzy, warmup) {
-  if (!embedder || !fuzzy) return
-  try {
-    await embedder.ensureLoaded()
-    const budget = warmup === 'gentle' ? 16 : 64
-    const pending = fuzzy.pendingVectors(budget)
-    if (pending.length === 0) return
-    const batchSize = 16
-    for (let i = 0; i < pending.length; i += batchSize) {
-      const chunk = pending.slice(i, i + batchSize)
-      const vecs = await embedder.embedBatch(chunk.map((p) => p.text))
-      fuzzy.storeVectors(chunk.map((p, j) => ({ rowid: p.rowid, vec: vecs[j] })))
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-  } catch {
-    // silent: semantic warm-up failures never surface
-  }
 }
 
 /**
@@ -546,42 +524,67 @@ export function schemaValue(value) {
   return value
 }
 
-/** Public rc.5 corpus APIs. Failed listings must not erase a valid index. */
+/**
+ * Public corpus APIs used by the index: persisted snapshots (cheap header +
+ * revision listing), live-preferred full reads, live ids and host titles.
+ * Failed listings must not erase a valid index.
+ */
 export function corpusServices(ctx) {
-  const query = ctx.sessionQuery ?? ctx.get?.('sessionQuery')
-  const persistence = ctx.sessionPersistence ?? ctx.get?.('sessionPersistence')
+  const query = () => ctx.sessionQuery ?? ctx.get?.('sessionQuery')
+  const persistence = () => ctx.sessionPersistence ?? ctx.get?.('sessionPersistence')
   return {
-    live: async () => Promise.all(ctx.sessions.list().map(async session => {
-      const log = await query.readSession(session.id)
-      return { header: log.session ?? session.header, events: log.events }
-    })),
-    snapshots: async () => persistence ? persistence.list() : [],
-    inspect: id => query.readSession(id),
+    listSnapshots: async () => {
+      const service = persistence()
+      return service ? service.list() : []
+    },
+    readSession: id => query().readSession(id),
+    liveIds: () => (ctx.sessions?.list?.() ?? []).map(session => session.id),
+    readTitles: async ids => {
+      const titles = new Map()
+      const service = query()
+      if (!service?.readTitleSnapshots) return titles
+      const results = await service.readTitleSnapshots(ids)
+      for (const result of results) {
+        const title = result?.status === 'fulfilled' ? result.value?.title?.title : undefined
+        if (typeof title === 'string' && title.trim()) titles.set(result.sessionId, title.trim())
+      }
+      return titles
+    },
   }
 }
 
 /** Installs recall behavior with live GUI configuration and a remote embedder. */
-export function applyRecall(ctx, getConfig, getEmbedder) {
+export function applyRecall(ctx, getConfig, getEmbedder, options = {}) {
   let fuzzy = null
   let lastEmbedder = null
   let disposed = false
-  let warmupTimer = null
-  let pending = Promise.resolve()
   const anchors = new Map()
-  const exclusive = task => {
-    const result = pending.then(() => {
-      if (disposed) throw new Error('Recall plugin disposed')
-      return task()
-    })
-    pending = result.catch(() => {})
-    return result
-  }
+  const exclusive = createExclusive()
   const getFuzzy = () => {
+    if (disposed) return null
     if (fuzzy) return fuzzy
     const candidate = new FuzzyIndex(recallIndexPath())
     try { candidate.open(); fuzzy = candidate; return fuzzy }
     catch { candidate.close(); return null }
   }
+  const log = message => { try { ctx.logger?.('context-recall')?.debug?.(message) } catch { /* never break recall */ } }
+  const corpus = corpusServices(ctx)
+  const embedQueue = new EmbedQueue({
+    index: getFuzzy,
+    getEmbedder: () => {
+      const embedder = getConfig().semantic ? getEmbedder() : null
+      if (embedder) lastEmbedder = embedder
+      return embedder
+    },
+    getConfig,
+    log,
+  })
+  const sync = new IndexSync({
+    index: getFuzzy, ...corpus, exclusive, log,
+    onIndexed: () => embedQueue.kick(),
+  })
+  ctx.on('session/event', (session, event) => sync.observe(session, event))
+  if (options.autoStart !== false) sync.start(options.schedule)
   const servicesNow = () => {
     const config = getConfig()
     const embedder = config.semantic ? getEmbedder() : null
@@ -589,40 +592,22 @@ export function applyRecall(ctx, getConfig, getEmbedder) {
     const index = getFuzzy()
     if (index && embedder?.fingerprint) index.setVectorSpace(embedder.fingerprint)
     return {
-      ...corpusServices(ctx), fuzzy: index, embedder, config,
+      fuzzy: index, sync, embedder, config,
       semanticEnabled: config.semantic,
       semanticBudget: config.warmup === 'gentle' ? 16 : 48,
     }
   }
-  const scheduleWarmup = () => {
-    if (disposed) return
-    warmupTimer = setTimeout(async () => {
-      try {
-        await exclusive(async () => {
-          const config = getConfig()
-          if (!config.semantic || config.background === false) return
-          const services = servicesNow()
-          if (!services.fuzzy || !services.embedder?.available) return
-          await services.fuzzy.reconcile(services)
-          services.fuzzy.setVectorSpace(services.embedder.fingerprint)
-          await warmupTick(services.embedder, services.fuzzy, config.warmup)
-        })
-      } catch { /* Retrieval remains available during online provider outages. */ }
-      scheduleWarmup()
-    }, 30000)
-    warmupTimer.unref?.()
-  }
-  scheduleWarmup()
   ctx.effect(() => () => {
     disposed = true
-    if (warmupTimer !== null) clearTimeout(warmupTimer)
+    sync.dispose()
     anchors.clear()
-    // Abort online IO before waiting for our queue. Cordis runs root cleanup
+    // Abort online IO before waiting for our queues. Cordis runs root cleanup
     // effects in reverse order, so the embedding owner's disposer may run later.
     const stopped = lastEmbedder?.dispose?.()
     // No sqlite handle is closed while an active network/index operation owns it.
-    return Promise.allSettled([pending, stopped]).finally(() => { fuzzy?.close(); fuzzy = null })
+    return Promise.allSettled([exclusive(() => {}), embedQueue.dispose(), stopped]).finally(() => { fuzzy?.close(); fuzzy = null })
   })
+  const handles = { sync, embedQueue, index: getFuzzy }
 
   // One global provider selects its anchor by the assembly's current agent.
   // Registration belongs to this plugin fiber, so hot reload removes it cleanly.
@@ -770,16 +755,17 @@ export function applyRecall(ctx, getConfig, getEmbedder) {
       },
     },
     async execute(args, exec) {
-      return exclusive(async () => {
-        exec?.signal?.throwIfAborted()
-        const sessionQuery = ctx.sessionQuery ?? ctx.get?.('sessionQuery')
-        if (!sessionQuery) return { ok: false, error: 'sessionQuery service unavailable' }
-        const services = servicesNow()
-        services.signal = exec?.signal
-        const result = await runRecall(sessionQuery, args, exec, services)
-        exec?.signal?.throwIfAborted()
-        return schemaValue(result)
-      })
+      // Index writes are serialized inside IndexSync; reads are synchronous
+      // SQLite calls, so queries need no queue of their own.
+      exec?.signal?.throwIfAborted()
+      if (disposed) return { ok: false, error: 'Recall plugin disposed' }
+      const sessionQuery = ctx.sessionQuery ?? ctx.get?.('sessionQuery')
+      if (!sessionQuery) return { ok: false, error: 'sessionQuery service unavailable' }
+      const services = servicesNow()
+      services.signal = exec?.signal
+      const result = await runRecall(sessionQuery, args, exec, services)
+      exec?.signal?.throwIfAborted()
+      return schemaValue(result)
     },
     presentCall: (args) => ({
       card: 'generic',
@@ -788,4 +774,5 @@ export function applyRecall(ctx, getConfig, getEmbedder) {
       rawInput: args.query,
     }),
   }))
+  return handles
 }

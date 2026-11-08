@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { FuzzyIndex } from '../lib/fuzzy-index.js'
 import { applyRecall, runRecall, buildEvents, buildAnchorText, corpusServices, schemaValue } from '../lib/recall.js'
+import { IndexSync } from '../lib/index-sync.js'
 import { Context } from '@deepseek-ai/cordis'
 import { Session, SessionStore, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
@@ -18,7 +19,12 @@ const sessions = [
   { header: { id: 'two', cwd: '/work/a', createdAt: 200 }, events: [message(0, '另一个窗口讨论数据库备份')] },
   { header: { id: 'three', cwd: '/work/b', createdAt: 300 }, events: [message(0, '另一个工作区讨论数据库备份')] },
 ]
-const liveServices = { live: async () => sessions, snapshots: async () => [], inspect: async () => { throw new Error('unexpected persisted read') } }
+const liveServices = {}
+const openIndexed = (list = sessions) => {
+  const fuzzy = new FuzzyIndex(':memory:').open()
+  for (const s of list) fuzzy.appendEvents(s.header, s.events)
+  return fuzzy
+}
 const exec = { agent: { session: { id: 'one', header: sessions[0].header } } }
 const query = {
   readTitle: async id => ({ title: `title:${id}` }),
@@ -32,7 +38,7 @@ const query = {
 }
 
 test('current-session default, workspace and explicit all scopes; no accidental broadening', async () => {
-  const fuzzy = new FuzzyIndex(':memory:').open()
+  const fuzzy = openIndexed()
   try {
     const services = { ...liveServices, fuzzy }
     const current = await runRecall(query, { query: '数据库' }, exec, services)
@@ -51,7 +57,7 @@ test('current-session default, workspace and explicit all scopes; no accidental 
 })
 
 test('detail hit list, full original assistant text and paged browsing are preserved', async () => {
-  const fuzzy = new FuzzyIndex(':memory:').open()
+  const fuzzy = openIndexed()
   try {
     const services = { ...liveServices, fuzzy }
     const hitList = await runRecall(query, { query: '在线向量', detail: { sessionId: 'one' } }, exec, services)
@@ -68,23 +74,22 @@ test('detail hit list, full original assistant text and paged browsing are prese
 })
 
 test('fuzzy typo tolerance and literal fallback survive semantic outage', async () => {
-  const fuzzy = new FuzzyIndex(':memory:').open()
+  const fuzzy = openIndexed()
   try {
     const result = await runRecall(query, { query: '数据库压缩模形' }, exec, { ...liveServices, fuzzy,
       semanticEnabled: true, embedder: { available: true, ensureLoaded: async () => { throw new Error('offline') } } })
     assert.equal(result.groups[0].sessionId, 'one')
     let request
     const fallback = await runRecall({ ...query, searchSessions: async r => { request = r; return { items: [{ header: sessions[0].header, bestMatch: { snippet: '原文' } }] } } },
-      { query: '原文' }, exec, { fuzzy: { reconcile: async () => { throw new Error('index unavailable') } } })
+      { query: '原文' }, exec, { fuzzy: { search: () => { throw new Error('index unavailable') } } })
     assert.equal(fallback.ok, true)
     assert.deepEqual(request.sessionFilters, [{ kind: 'id', values: ['one'] }])
   } finally { fuzzy.close() }
 })
 
 test('remote semantic retrieval uses dynamic dimensions and gated coverage', async () => {
-  const fuzzy = new FuzzyIndex(':memory:').open()
+  const fuzzy = openIndexed()
   try {
-    await fuzzy.reconcile(liveServices)
     fuzzy.setVectorSpace('model-one')
     const pending = fuzzy.pendingVectors(100)
     fuzzy.storeVectors(pending.map(p => ({ rowid: p.rowid, vec: new Float32Array([1, 0, 0]) })))
@@ -110,16 +115,15 @@ test('remote semantic retrieval uses dynamic dimensions and gated coverage', asy
 })
 
 test('deleted/replaced sessions clear orphan vectors and keep exact coverage', async () => {
-  const fuzzy = new FuzzyIndex(':memory:').open()
+  const fuzzy = openIndexed()
   try {
-    await fuzzy.reconcile(liveServices)
     fuzzy.setVectorSpace('test')
     fuzzy.storeVectors(fuzzy.pendingVectors(100).map(p => ({ rowid: p.rowid, vec: new Float32Array([1, 0]) })))
-    await fuzzy.reconcile({ live: () => [sessions[0]], snapshots: async () => [] })
+    const snap = s => ({ header: s.header, revision: `r:${s.header.id}` })
+    await fuzzy.reconcile({ snapshots: async () => [snap(sessions[0])], inspect: async id => sessions.find(s => s.header.id === id) })
     assert.equal(fuzzy.requireDb().prepare('SELECT COUNT(*) AS n FROM vectors').get().n, 3)
     assert.equal(fuzzy.vectorCoverage(), 1)
-    const changed = { ...sessions[0], events: [...sessions[0].events, message(3, '新的尚未嵌入文本')] }
-    await fuzzy.reconcile({ live: () => [changed], snapshots: async () => [] })
+    fuzzy.appendEvents(sessions[0].header, [...sessions[0].events, message(3, '新的尚未嵌入文本')])
     assert.equal(fuzzy.vectorCoverage(), 0.75)
   } finally { fuzzy.close() }
 })
@@ -142,14 +146,19 @@ test('rc.5 block-array summaries and original user fragments build anchors', asy
   assert.match(text, /detail/)
 })
 
-test('public corpus adapter reads full logs through current query and persistence APIs', async () => {
+test('public corpus adapter lists snapshots, reads logs and folds host titles', async () => {
   let listCount = 0
   const svc = corpusServices({ sessions: { list: () => [{ id: 'one', header: sessions[0].header }] },
-    sessionQuery: { readSession: async () => ({ session: sessions[0].header, events: sessions[0].events }) },
+    sessionQuery: { readSession: async () => ({ session: sessions[0].header, events: sessions[0].events }),
+      readTitleSnapshots: async ids => ids.map(id => id === 'one'
+        ? { sessionId: id, status: 'fulfilled', value: { header: sessions[0].header, title: { title: ' 标题一 ' } } }
+        : { sessionId: id, status: 'rejected', reason: new Error('missing') }) },
     sessionPersistence: { list: async () => { listCount++; return [] } } })
-  assert.equal((await svc.live())[0].events.length, 3)
-  await svc.snapshots()
+  assert.equal((await svc.readSession('one')).events.length, 3)
+  assert.deepEqual(svc.liveIds(), ['one'])
+  await svc.listSnapshots()
   assert.equal(listCount, 1)
+  assert.deepEqual([...await svc.readTitles(['one', 'two'])], [['one', '标题一']])
   assert.deepEqual(schemaValue({ a: null, b: { c: undefined, d: 'kept' }, e: 0 }), { b: { d: 'kept' }, e: 0 })
 })
 
@@ -160,7 +169,7 @@ test('anchor lifetime, live GUI toggle and full detail rendering', async () => {
   const ctx = { sessionQuery: query, sessions: { list: () => [] }, effect: f => cleanup.push(f()),
     tools: { register: tool => { definition = tool } }, systemPrompt: { context: p => { provider = p } },
     on: (name, fn) => listeners.set(name, fn) }
-  applyRecall(ctx, () => config, () => null)
+  applyRecall(ctx, () => config, () => null, { autoStart: false })
   try {
     listeners.get('session/event')({ id: 'one' }, { type: 'compaction/summary', data: { summary: [{ type: 'text', text: '压缩摘要' }] } })
     await new Promise(resolve => setImmediate(resolve))
@@ -195,8 +204,13 @@ test('real rc.5 query/persistence reads and system prompt assembly honor ported 
     const fibers = [ctx.plugin(SessionStore), ctx.plugin(ReadOnlyPersistence), ctx.plugin(SessionQueryEngine), ctx.plugin(SystemPrompt), ctx.plugin(ToolRuntime), ctx.plugin(NativeToolExecutor)]
     await Promise.all(fibers.map(fiber => fiber.await()))
     const live = ctx.sessions.create(SessionId('live-recall'), { meta: { cwd: '/work/live' } })
-    live.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '实时会话数据库内容' }] }), { surfaceOp: 'append' })
-    const services = { ...corpusServices(ctx), fuzzy }
+    const liveEvent = live.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '实时会话数据库内容' }] }), { surfaceOp: 'append' })
+    const sync = new IndexSync({ index: () => fuzzy, ...corpusServices(ctx) })
+    sync.observe(live, liveEvent)
+    await sync.flush()
+    await sync.reconcile()
+    sync.dispose()
+    const services = { fuzzy }
     const result = await runRecall(ctx.sessionQuery, { query: '数据库', scope: 'all' }, {}, services)
     assert.equal(result.ok, true)
     assert.deepEqual(new Set(result.groups.map(group => group.sessionId)), new Set([live.id, cold.id]))
@@ -206,7 +220,7 @@ test('real rc.5 query/persistence reads and system prompt assembly honor ported 
     assert.ok(handlesClosed > 0, 'public query must close read-only cold-session handles')
 
     const recallFiber = ctx.plugin({ name: 'recall-integration-fixture', inject: ['tools', 'sessions', 'sessionQuery', 'sessionPersistence', 'systemPrompt'],
-      apply: child => applyRecall(child, () => ({ semantic: false, anchor: true, anchorRounds: 3 }), () => null) })
+      apply: child => { applyRecall(child, () => ({ semantic: false, anchor: true, anchorRounds: 3 }), () => null, { autoStart: false }) } })
     await recallFiber.await()
     ctx.emit('session/event', live, { type: 'compaction/summary', data: { summary: [{ type: 'text', text: '来自真实提示组装的压缩锚点' }] } })
     await new Promise(resolve => setImmediate(resolve))
@@ -233,9 +247,13 @@ test('unload aborts in-flight online warm-up before waiting for its queue', asyn
   }
   const ctx = { sessionQuery: { ...query, readSession: async () => ({ session: sessions[0].header, events: sessions[0].events }) },
     sessions: { list: () => [{ id: 'one', header: sessions[0].header }] }, effect: f => cleanup.push(f()),
-    tools: { register: tool => { definition = tool } }, systemPrompt: { context: () => {} }, on: () => {} }
+    tools: { register: tool => { definition = tool } }, systemPrompt: { context: () => {} }, on: (name, fn) => { if (name === 'session/event') observers.push(fn) } }
+  const observers = []
+  const observe = (...args) => observers.forEach(fn => fn(...args))
   try {
-    applyRecall(ctx, () => ({ semantic: true, anchor: true, warmup: 'gentle' }), () => embedder)
+    const handles = applyRecall(ctx, () => ({ semantic: true, anchor: true, warmup: 'gentle' }), () => embedder, { autoStart: false })
+    observe({ id: 'one', header: sessions[0].header }, sessions[0].events[0])
+    await handles.sync.flush()
     const running = definition.execute({ query: '数据库' }, exec)
     await entered
     await Promise.all(cleanup.map(fn => fn()))

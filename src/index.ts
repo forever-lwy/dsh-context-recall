@@ -35,8 +35,10 @@ export async function apply(ctx: Context): Promise<void> {
     }
     return embedder
   }
-  applyRecall(ctx, () => {
+  const recall = applyRecall(ctx, () => {
     const config = settings.current()
     return {...config.recall, semantic: config.embedding.enabled && config.recall.semantic, background: config.embedding.background}
   }, getEmbedder)
+  // A saved embedding configuration may enable vectors or change their space.
+  ctx.effect(() => settings.onSaved(() => recall.embedQueue.reset()), 'context-recall: embedding config watcher')
 }
