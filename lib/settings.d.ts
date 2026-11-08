@@ -12,6 +12,9 @@ export declare class ContextRecallService extends TypertRemoteService {
     readonly store: ConfigStore;
     private saves;
     private readonly thresholdValidators;
+    private readonly savedListeners;
+    /** Observe successful saves; returns the disposer. */
+    onSaved(listener: () => void): () => void;
     constructor(ctx: Context, store: ConfigStore);
     current(): ConfigData;
     addThresholdValidator(validate: (ratio: number | null) => void): () => void;

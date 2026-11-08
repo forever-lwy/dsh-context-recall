@@ -63,11 +63,22 @@ export function buildEvents(hits: any, query: any, config?: {}): {
 export function buildAnchorText(sessionQuery: any, sessionId: any, summaryEvent: any): Promise<string>;
 /** Remove absent optional fields so runtime output matches its declared schema. */
 export function schemaValue(value: any): any;
-/** Public rc.5 corpus APIs. Failed listings must not erase a valid index. */
+/**
+ * Public corpus APIs used by the index: persisted snapshots (cheap header +
+ * revision listing), live-preferred full reads, live ids and host titles.
+ * Failed listings must not erase a valid index.
+ */
 export function corpusServices(ctx: any): {
-    live: () => Promise<any[]>;
-    snapshots: () => Promise<any>;
-    inspect: (id: any) => any;
+    listSnapshots: () => Promise<any>;
+    readSession: (id: any) => any;
+    liveIds: () => any;
+    readTitles: (ids: any) => Promise<Map<any, any>>;
 };
 /** Installs recall behavior with live GUI configuration and a remote embedder. */
-export function applyRecall(ctx: any, getConfig: any, getEmbedder: any): void;
+export function applyRecall(ctx: any, getConfig: any, getEmbedder: any, options?: {}): {
+    sync: IndexSync;
+    embedQueue: EmbedQueue;
+    index: () => any;
+};
+import { IndexSync } from './index-sync.js';
+import { EmbedQueue } from './index-sync.js';

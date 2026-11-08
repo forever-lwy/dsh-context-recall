@@ -5,19 +5,12 @@ export function recallIndexPath(): string;
 /** Keep only letters and numbers (drops whitespace and punctuation). */
 export function stripText(text: any): string;
 /**
- * Extract searchable conversational text from one event.
- * Mirrors the official extractSessionEventText surface for user/assistant
- * messages — except tool-call/tool-result blocks are excluded (operational
- * noise; see blockText). Every other event type contributes no text.
+ * Extract searchable conversational text from one event: user-authored
+ * messages and assistant text blocks only. Every other event, injected host
+ * message and tool block contributes no text.
  */
 export function extractEventText(event: any): string;
-/**
- * Build search documents for one complete event log (ascending seq order).
- * The full append-only log is indexed (including shadowed/compacted history);
- * surface classification is intentionally omitted — for recall, all history
- * must stay searchable, and foldSurface lives in the official dsh-session
- * package we choose not to depend on.
- */
+/** Build search documents for events in ascending seq order. */
 export function buildSearchDocs(sessionId: any, events: any): {
     sessionId: any;
     seq: any;
@@ -25,15 +18,20 @@ export function buildSearchDocs(sessionId: any, events: any): {
     time: any;
     text: string;
 }[];
+/** Latest `session/title` event among `events`, or null. */
+export function latestTitle(events: any): {
+    title: any;
+    seq: any;
+} | null;
+/** Event types that can change what the index holds. */
+export const INDEXED_EVENT_TYPES: Set<string>;
 /**
- * Self-built fuzzy index over session conversation text.
- * - `docs` FTS5 virtual table (trigram tokenizer) over whitespace/punctuation
- *   stripped text: arbitrary-position substring recall for >= 3 chars.
- * - `doc_texts` plain table holding original text: used for the char-bigram
- *   LIKE recall pass (covers 1-2 char queries and paraphrase overlap) and for
- *   snippets.
- * - `sessions` table tracks per-session state (fingerprint/revision/max_seq)
- *   for incremental reconciliation.
+ * Self-built index over session titles and conversation text.
+ * - `sessions`: one row per session (metadata, title, revision watermark).
+ * - `titles`: FTS5 trigram table over normalized titles.
+ * - `doc_texts`: original text per indexed event; `docs`: FTS5 trigram table
+ *   over the normalized text (same rowid).
+ * - `vectors`: float32 embeddings keyed by doc rowid.
  */
 export class FuzzyIndex {
     constructor(path?: string);
@@ -42,34 +40,76 @@ export class FuzzyIndex {
     dim: number;
     vectorSpace: any;
     open(): this;
-    _vecCache: any;
     close(): void;
     requireDb(): DatabaseSync;
+    /** Run `fn` inside one immediate transaction. */
+    transaction(fn: any): any;
     /** Model/endpoint/query-prefix changes invalidate only derived vectors. */
     setVectorSpace(fingerprint: any): void;
+    /** Watermark rows for every indexed session: { id, revision, max_seq }. */
+    sessionStates(): Record<string, import("node:sqlite").SQLOutputValue>[];
+    /** One session's watermark row, or undefined. */
+    sessionState(id: any): Record<string, import("node:sqlite").SQLOutputValue> | undefined;
     /**
-     * Incremental reconcile against the live + persisted corpus.
-     * services: { live(): [{header, events}], snapshots(): Promise<[{header,
-     * revision}]>, inspect(id): Promise<{meta, events}> }
+     * Append the events newer than the stored watermark (append-only logs).
+     * Creates the session row when missing, folds the latest title and refreshes
+     * metadata. Returns the number of new documents.
+     */
+    appendEvents(header: any, events: any, { revision }?: {}): any;
+    /**
+     * Drop one session's documents and index its complete log again. Used when a
+     * log no longer extends the stored watermark (rewritten or truncated).
+     */
+    replaceSession(header: any, events: any, { revision }?: {}): any;
+    /** Record a persisted revision for an already-current session. */
+    setRevision(id: any, revision: any): void;
+    /** Remove every row of one session. */
+    removeSession(id: any): void;
+    /** Flag sessions archived (ids in `archivedIds`) or active (all others). */
+    setArchived(archivedIds: any): void;
+    /** Set a session title known from outside the event stream (backfill). */
+    setTitle(id: any, title: any, seq?: number): void;
+    /**
+     * Incremental reconcile against the persisted corpus: only sessions whose
+     * revision changed are read. services: { snapshots(): Promise<[{header,
+     * revision}]>, inspect(id): Promise<{session?, events}>, keep?(id): boolean,
+     * yield?(): Promise }. `keep` protects live sessions that are not persisted
+     * yet from deletion.
      */
     reconcile(services: any): Promise<{
         reindexed: number;
+        removed: number;
     }>;
     /**
      * Fuzzy recall: trigram FTS pass + char-bigram LIKE pass, then a
      * containment rerank. Returns hits sorted by score desc, each with
      * { rowid, session_id, cwd, created_at, seq, type, time, text, score }.
      */
-    search({ query, limit, sessionId, cwd, minScore }: {
+    search({ query, limit, sessionId, cwd, minScore, includeArchived }: {
         query: any;
         limit?: number | undefined;
         sessionId: any;
         cwd: any;
         minScore?: number | undefined;
+        includeArchived?: boolean | undefined;
     }): any[];
     /**
-     * Documents not yet embedded (semantic warm-up): oldest first.
+     * Title search over session titles. Returns sessions sorted by score with
+     * { session_id, title, cwd, created_at, updated_at, archived, score }.
      */
+    searchTitles({ query, limit, cwd, includeArchived, minScore }: {
+        query: any;
+        limit?: number | undefined;
+        cwd: any;
+        includeArchived?: boolean | undefined;
+        minScore?: number | undefined;
+    }): {
+        score: number;
+    }[];
+    /** Metadata rows for `ids`: Map(id -> { title, cwd, created_at, updated_at, archived }). */
+    sessionsMeta(ids: any): Map<any, any>;
+    /** Sessions missing a title (for one-time backfill). */
+    untitledSessions(limit?: number): import("node:sqlite").SQLOutputValue[];
     /**
      * Page through one session's indexed text blocks in seq order.
      * Returns { rows: [{seq, type, time, text}], nextFromSeq } — nextFromSeq is
@@ -79,28 +119,29 @@ export class FuzzyIndex {
         rows: Record<string, import("node:sqlite").SQLOutputValue>[];
         nextFromSeq: any;
     };
+    /** Documents not yet embedded (semantic warm-up): oldest first. */
     pendingVectors(limit?: number): Record<string, import("node:sqlite").SQLOutputValue>[];
     /** Store embedded vectors (Float32Array each) keyed by doc rowid. */
     storeVectors(rows: any): void;
     /** Fraction of documents with vectors (0..1). */
     vectorCoverage(): number;
-    /** Load all vectors into a cached {rowids, data} flat Float32Array. */
-    syncVectorCache(): void;
     /**
      * Semantic (cosine) search over embedded docs. `qVec` must be normalized.
-     * Returns hits sorted by score desc with doc metadata, scoped by
-     * sessionId/cwd. Requires full index coverage for meaningful results —
-     * callers gate on vectorCoverage().
+     * Vectors are streamed from SQLite inside the requested scope and only the
+     * best `limit` survive, so memory stays bounded however large the corpus.
      */
-    semanticSearch(qVec: any, limit?: number, { sessionId, cwd, minScore }?: {
+    semanticSearch(qVec: any, limit?: number, { sessionId, cwd, minScore, includeArchived }?: {
         minScore?: number | undefined;
+        includeArchived?: boolean | undefined;
     }): {
         score: any;
     }[];
-    /** Total indexed documents (tests / diagnostics). */
+    /** Index size (tests / diagnostics). */
     stats(): {
         sessions: import("node:sqlite").SQLOutputValue;
         docs: import("node:sqlite").SQLOutputValue;
+        vectors: import("node:sqlite").SQLOutputValue;
     };
+    #private;
 }
 import { DatabaseSync } from 'node:sqlite';

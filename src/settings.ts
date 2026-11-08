@@ -13,6 +13,12 @@ declare module '@deepseek-ai/cordis' { interface Context { contextRecall: Contex
 export class ContextRecallService extends TypertRemoteService {
   private saves: Promise<unknown> = Promise.resolve()
   private readonly thresholdValidators = new Set<(ratio: number | null) => void>()
+  private readonly savedListeners = new Set<() => void>()
+  /** Observe successful saves; returns the disposer. */
+  onSaved(listener: () => void): () => void {
+    this.savedListeners.add(listener)
+    return () => { this.savedListeners.delete(listener) }
+  }
   constructor(ctx: Context, readonly store: ConfigStore) { super(ctx, 'contextRecall') }
   current(): ConfigData { return this.store.current() }
   addThresholdValidator(validate: (ratio: number | null) => void): () => void {
@@ -78,6 +84,7 @@ export class ContextRecallService extends TypertRemoteService {
       if (error instanceof ConfigConflict) throw new RemoteError('gateway/bad-request', error.message, {})
       throw new RemoteError('gateway/internal', '保存失败，请重新加载核对配置和凭据后重试。', {})
     }
+    for (const listener of this.savedListeners) { try { listener() } catch { /* listeners never fail a save */ } }
     return this.get({}, new AbortController().signal)
   }
   @Remote
