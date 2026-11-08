@@ -143,7 +143,7 @@ test('rc.5 block-array summaries and original user fragments build anchors', asy
   const text = await buildAnchorText(query, 'one', { data: { summary: [{ type: 'text', text: '使用专用压缩模型' }], shadowedRange: { start: 0, end: 2 } } })
   assert.match(text, /摘要:使用专用压缩模型/)
   assert.match(text, /保留原始日志/)
-  assert.match(text, /detail/)
+  assert.match(text, /"action":"read"/)
 })
 
 test('public corpus adapter lists snapshots, reads logs and folds host titles', async () => {

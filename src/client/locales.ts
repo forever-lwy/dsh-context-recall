@@ -16,6 +16,9 @@ export const zh: Record<string, string> = {
   save: '保存配置', saving: '保存中…', saved: '配置已保存。', loading: '读取配置中…', retry: '重新读取',
   dirty: '有未保存的修改', discard: '放弃修改并重新读取', invalid: '配置无效，请检查输入：', failed: '操作失败。',
   recalling: '回忆中…', done: '回忆完成', recallFailed: '回忆失败',
+  access: 'AI 访问其他会话', accessHelp: '默认只检索当前会话。下面两项决定 AI 能否搜索或读取其他会话，由插件在调用时强制检查。“在我要求时”要求 AI 引用你最近消息中的原话，插件核对原话确实出现过才放行。',
+  crossSession: '搜索其他会话（含标题检索）', readOther: '读取指定的其他会话原文',
+  accessOff: '不允许', accessWhenAsked: '在我要求时', accessAutonomous: 'AI 可自主搜索', accessAllowed: 'AI 可自主读取',
 }
 export const en: Record<string, string> = {
   nav: 'Context compaction & recall', intro: 'Choose a global compaction model and configure online embeddings and post-compaction recall.',
@@ -35,4 +38,7 @@ export const en: Record<string, string> = {
   save: 'Save settings', saving: 'Saving…', saved: 'Settings saved.', loading: 'Loading settings…', retry: 'Reload settings',
   dirty: 'Unsaved changes', discard: 'Discard changes and reload', invalid: 'Invalid settings; review the inputs: ', failed: 'Operation failed.',
   recalling: 'Recalling…', done: 'Recall complete', recallFailed: 'Recall failed',
+  access: 'AI access to other sessions', accessHelp: 'Recall searches the current session by default. These settings decide whether the AI may search or read other sessions; the plugin enforces them on every call. “When I ask” requires the AI to quote your own words from a recent message, and the plugin checks the quote before allowing it.',
+  crossSession: 'Search other sessions (including titles)', readOther: 'Read another named session',
+  accessOff: 'Not allowed', accessWhenAsked: 'When I ask', accessAutonomous: 'AI may search on its own', accessAllowed: 'AI may read on its own',
 }
