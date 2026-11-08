@@ -19,6 +19,14 @@ export const zh: Record<string, string> = {
   access: 'AI 访问其他会话', accessHelp: '默认只检索当前会话。下面两项决定 AI 能否搜索或读取其他会话，由插件在调用时强制检查。“在我要求时”要求 AI 引用你最近消息中的原话，插件核对原话确实出现过才放行。',
   crossSession: '搜索其他会话（含标题检索）', readOther: '读取指定的其他会话原文',
   accessOff: '不允许', accessWhenAsked: '在我要求时', accessAutonomous: 'AI 可自主搜索', accessAllowed: 'AI 可自主读取',
+  searchTitle: '会话检索', searchPlaceholder: '搜索会话标题与全文…', modeLabel: '检索方式',
+  modeAuto: '混合', modeKeyword: '全文', modeTitle: '标题', modeSemantic: '语义',
+  workspaceLabel: '工作区', allWorkspaces: '全部工作区', includeArchived: '包含已归档',
+  indexStatus: '已索引 {sessions} 个会话 · {docs} 段对话', vectorCoverage: '向量覆盖 {coverage}%', vectorOff: '未启用向量',
+  semanticNotReady: '语义索引尚未就绪（当前覆盖 {coverage}%），结果可能为空。', semanticOff: '未启用在线向量，请在设置中配置后使用语义检索。',
+  searching: '检索中…', noResults: '没有找到匹配的会话。', untitled: '（无标题）', archived: '已归档', subagent: '子代理',
+  moreHits: '共 {count} 处命中', you: '你', assistant: '助手', semanticHit: '语义',
+  preview: '原文预览', openSession: '打开会话', closePreview: '关闭预览', earlier: '加载更早', later: '加载更多', unknownTime: '时间未知',
 }
 export const en: Record<string, string> = {
   nav: 'Context compaction & recall', intro: 'Choose a global compaction model and configure online embeddings and post-compaction recall.',
@@ -41,4 +49,12 @@ export const en: Record<string, string> = {
   access: 'AI access to other sessions', accessHelp: 'Recall searches the current session by default. These settings decide whether the AI may search or read other sessions; the plugin enforces them on every call. “When I ask” requires the AI to quote your own words from a recent message, and the plugin checks the quote before allowing it.',
   crossSession: 'Search other sessions (including titles)', readOther: 'Read another named session',
   accessOff: 'Not allowed', accessWhenAsked: 'When I ask', accessAutonomous: 'AI may search on its own', accessAllowed: 'AI may read on its own',
+  searchTitle: 'Session search', searchPlaceholder: 'Search session titles and text…', modeLabel: 'Search mode',
+  modeAuto: 'Hybrid', modeKeyword: 'Full text', modeTitle: 'Titles', modeSemantic: 'Semantic',
+  workspaceLabel: 'Workspace', allWorkspaces: 'All workspaces', includeArchived: 'Include archived',
+  indexStatus: '{sessions} sessions · {docs} messages indexed', vectorCoverage: '{coverage}% embedded', vectorOff: 'Embeddings off',
+  semanticNotReady: 'Semantic index not ready ({coverage}% embedded); results may be empty.', semanticOff: 'Online embeddings are off; configure them in settings to use semantic search.',
+  searching: 'Searching…', noResults: 'No matching sessions.', untitled: '(untitled)', archived: 'Archived', subagent: 'Subagent',
+  moreHits: '{count} hits', you: 'You', assistant: 'Assistant', semanticHit: 'semantic',
+  preview: 'Original text', openSession: 'Open session', closePreview: 'Close preview', earlier: 'Load earlier', later: 'Load more', unknownTime: 'Unknown time',
 }

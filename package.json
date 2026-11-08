@@ -1,6 +1,6 @@
 {
   "name": "@forever-lwy/dsh-context-recall",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Context compaction with global model settings and hybrid history recall using online embeddings",
   "type": "module",
   "main": "lib/index.js",
@@ -102,7 +102,10 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-api-remote-access"
+        "@deepseek-ai/dsh-api-remote-access",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace"
       ]
     }
   }
