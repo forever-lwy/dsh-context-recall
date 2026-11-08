@@ -580,6 +580,32 @@ export class FuzzyIndex {
     return { rows, nextFromSeq }
   }
 
+  /**
+   * Indexed text blocks around `seq`: up to `before` blocks before it and the
+   * block at/after it plus `after` more. Returns { rows, hasBefore, hasAfter }.
+   */
+  window(sessionId, seq, before = 4, after = 4) {
+    const db = this.requireDb()
+    const b = Math.min(Math.max(Math.floor(before), 0), 50)
+    const a = Math.min(Math.max(Math.floor(after), 0), 50)
+    const earlier = db.prepare('SELECT seq, type, time, text FROM doc_texts WHERE session_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?')
+      .all(sessionId, seq, b + 1)
+    const later = db.prepare('SELECT seq, type, time, text FROM doc_texts WHERE session_id = ? AND seq >= ? ORDER BY seq ASC LIMIT ?')
+      .all(sessionId, seq, a + 2)
+    return {
+      rows: [...earlier.slice(0, b).reverse(), ...later.slice(0, a + 1)],
+      hasBefore: earlier.length > b,
+      hasAfter: later.length > a + 1,
+    }
+  }
+
+  /** Distinct workspaces with session counts, most sessions first. */
+  workspaces() {
+    return this.requireDb().prepare(
+      'SELECT cwd, COUNT(*) AS sessions, MAX(updated_at) AS updated_at FROM sessions WHERE cwd IS NOT NULL GROUP BY cwd ORDER BY sessions DESC, updated_at DESC',
+    ).all()
+  }
+
   /** Documents not yet embedded (semantic warm-up): oldest first. */
   pendingVectors(limit = 50) {
     return this.requireDb().prepare(`

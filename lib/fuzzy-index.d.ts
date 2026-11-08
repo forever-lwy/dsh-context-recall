@@ -119,6 +119,17 @@ export class FuzzyIndex {
         rows: Record<string, import("node:sqlite").SQLOutputValue>[];
         nextFromSeq: any;
     };
+    /**
+     * Indexed text blocks around `seq`: up to `before` blocks before it and the
+     * block at/after it plus `after` more. Returns { rows, hasBefore, hasAfter }.
+     */
+    window(sessionId: any, seq: any, before?: number, after?: number): {
+        rows: Record<string, import("node:sqlite").SQLOutputValue>[];
+        hasBefore: boolean;
+        hasAfter: boolean;
+    };
+    /** Distinct workspaces with session counts, most sessions first. */
+    workspaces(): Record<string, import("node:sqlite").SQLOutputValue>[];
     /** Documents not yet embedded (semantic warm-up): oldest first. */
     pendingVectors(limit?: number): Record<string, import("node:sqlite").SQLOutputValue>[];
     /** Store embedded vectors (Float32Array each) keyed by doc rowid. */

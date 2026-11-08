@@ -3,8 +3,13 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-api-gateway/client'
-import { remoteInfo, readSettings, saveSettings, testEmbedding } from '../remote.js'
+import { remoteInfo, readSettings, saveSettings, testEmbedding, searchSessions, readSessionText, readIndexStatus, locateMessage } from '../remote.js'
 import { ContextRecallSettings, type SettingsFace } from './Settings.js'
+import { SearchPage, SearchIcon, type SearchFace } from './SearchPage.js'
+import { openSession } from './navigate.js'
+
+/** Panel id of the session search page (sidebar row id = main page key). */
+export const SEARCH_PANEL_ID = 'context-recall-search'
 import { zh, en } from './locales.js'
 import { styles } from './styles.js'
 
@@ -40,6 +45,25 @@ export async function apply(ctx: Context): Promise<void> {
       name: 'settings.section', id: 'context-recall', order: 35, label: () => t('nav'),
       inject: () => ({...face, t}),
     }, ContextRecallSettings))
+    const search: SearchFace = {
+      search: (request, signal) => searchSessions(remoteCtx.remote, request, signal),
+      read: (request, signal) => readSessionText(remoteCtx.remote, request, signal),
+      status: signal => readIndexStatus(remoteCtx.remote, signal),
+      open: (sessionId, seq) => openSession(ctx, sessionId, seq === undefined ? undefined : async () => {
+        const found = await locateMessage(remoteCtx.remote, { sessionId, seq })
+        return found.ok && found.turn !== undefined ? { turn: found.turn, text: found.text } : null
+      }),
+      t,
+    }
+    // Session search: a sidebar tool row that opens a full main-column page.
+    // Seats declared by the layout and sidebar client packages (typed there).
+    const slots = remoteCtx.slots as any
+    slots.inject('main', () => slots.register({
+      name: 'main', key: SEARCH_PANEL_ID, locale: namespace, inject: () => search,
+    }, SearchPage))
+    slots.inject('sidebar.panellist', () => slots.register({
+      name: 'sidebar.panellist', id: SEARCH_PANEL_ID, order: 7, locale: namespace, label: () => t('searchTitle'),
+    }, SearchIcon))
   })
   ;(ctx.slots as any).inject('tool.call.toolview', () => (ctx.slots as any).register({
     name: 'tool.call.toolview', key: 'recall', locale: namespace, inject: () => ({t}),

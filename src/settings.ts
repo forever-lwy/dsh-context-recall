@@ -6,7 +6,16 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { ConfigStore, ConfigConflict } from './store.js'
 import { OnlineEmbedder } from './embedding.js'
-import { remoteInfo, saveSchema, testSchema, type SettingsView, type SaveRequest, type TestRequest } from './remote.js'
+import { remoteInfo, saveSchema, testSchema, searchRequestSchema, readRequestSchema, locateRequestSchema, type LocateRequest, type LocateResult, type SettingsView, type SaveRequest, type TestRequest,
+  type SearchRequest, type SearchResult, type ReadRequest, type ReadResult, type StatusResult } from './remote.js'
+
+/** The search page API, attached once the index exists. */
+export interface SearchApi {
+  search(request: SearchRequest, signal?: AbortSignal): Promise<SearchResult>
+  read(request: ReadRequest): Promise<ReadResult>
+  locate(request: LocateRequest): Promise<LocateResult>
+  status(): Promise<StatusResult>
+}
 import type { ConfigData } from './config.js'
 
 declare module '@deepseek-ai/cordis' { interface Context { contextRecall: ContextRecallService } }
@@ -14,6 +23,53 @@ export class ContextRecallService extends TypertRemoteService {
   private saves: Promise<unknown> = Promise.resolve()
   private readonly thresholdValidators = new Set<(ratio: number | null) => void>()
   private readonly savedListeners = new Set<() => void>()
+  private searchApi: SearchApi | null = null
+  /** Attach the search page API; returns the detacher. */
+  attachSearch(api: SearchApi): () => void {
+    this.searchApi = api
+    return () => { if (this.searchApi === api) this.searchApi = null }
+  }
+  private requireSearch(): SearchApi {
+    if (!this.searchApi) throw new RemoteError('gateway/internal', '会话索引尚未就绪，请稍后重试。', {})
+    return this.searchApi
+  }
+  @Remote
+  async search(request: SearchRequest, signal: AbortSignal): Promise<SearchResult> {
+    const parsed = searchRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', '检索参数无效。', {})
+    signal.throwIfAborted()
+    try { return await this.requireSearch().search(parsed.data, signal) }
+    catch (error) {
+      if (error instanceof RemoteError || signal.aborted) throw error
+      throw new RemoteError('gateway/internal', error instanceof Error ? error.message : '检索失败。', {})
+    }
+  }
+  @Remote
+  async read(request: ReadRequest, signal: AbortSignal): Promise<ReadResult> {
+    const parsed = readRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', '读取参数无效。', {})
+    signal.throwIfAborted()
+    return this.requireSearch().read(parsed.data)
+  }
+  @Remote
+  async locate(request: LocateRequest, signal: AbortSignal): Promise<LocateResult> {
+    const parsed = locateRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', '定位参数无效。', {})
+    signal.throwIfAborted()
+    try { return await this.requireSearch().locate(parsed.data) }
+    catch (error) {
+      if (error instanceof RemoteError) throw error
+      return { ok: false, error: error instanceof Error ? error.message : '定位失败。' }
+    }
+  }
+  @Remote
+  async status(request: Record<string, never>, signal: AbortSignal): Promise<StatusResult> {
+    signal.throwIfAborted()
+    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).length) {
+      throw new RemoteError('gateway/bad-request', '状态读取参数无效。', {})
+    }
+    return this.requireSearch().status()
+  }
   /** Observe successful saves; returns the disposer. */
   onSaved(listener: () => void): () => void {
     this.savedListeners.add(listener)
