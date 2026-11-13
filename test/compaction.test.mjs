@@ -151,6 +151,16 @@ test('in-flight call snapshots the configured route before GUI changes', async (
   assert.equal(result.model, 'summary-model')
 })
 
+test('summary failures preserve provider-specific codes and structured facts on rc.3', async () => {
+  const failure = { code: 'PROVIDER_CUSTOM_LIMIT', message: 'Custom limit', status: 429, providerRetryAfterMs: 1500 }
+  await assert.rejects(fixture([{ type: 'finish', reason: { kind: 'error', failure } }]).run(), error => {
+    assert.equal(error.code, failure.code)
+    assert.equal(error.failure.status, 429)
+    assert.equal(error.failure.providerRetryAfterMs, 1500)
+    return true
+  })
+})
+
 function transactionFixture(chunks) {
   const f = fixture(chunks)
   const session = Session.create(SessionId('real-compaction-session'))
