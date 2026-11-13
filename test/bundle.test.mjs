@@ -29,7 +29,7 @@ function officialLayers() {
   return ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'].flatMap(name => {
     const manifestPath = require.resolve(name + '/package.json')
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    assert.equal(manifest.version, '0.2.2-rc.1')
+    assert.equal(manifest.version, '0.2.2-rc.3')
     const patches = manifest.dsh.bundle.patch
     return (Array.isArray(patches) ? patches : [patches]).map(path =>
       loadOverlayPatches('context-recall-test', resolve(dirname(manifestPath), path)))

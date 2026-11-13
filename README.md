@@ -1,6 +1,6 @@
 # dsh-context-recall
 
-面向 **DeepSeek Harness**（当前在 `0.2.2-rc.1` 上构建测试，不按 dsh 版本拦截加载） 的上下文压缩与历史回忆插件。
+面向 **DeepSeek Harness**（当前在 `0.2.2-rc.3` 上构建测试，不按 dsh 版本拦截加载） 的上下文压缩与历史回忆插件。
 以 [dsh-recall 0.2.2](https://github.com/Relistencode/dsh-recall/tree/225b940b7a361e57d9ddb495e04cef2580539d08)
 为基础，适配当前会话 API，加入全局压缩模型与触发比例、在线向量和完整 GUI 设置。
 
@@ -169,7 +169,7 @@ npm test
 ```
 
 依赖不引用临时上游目录。需要离线备用的本地版本包时运行 `npm pack --pack-destination ../releases`，每版使用新的版本号和文件名。
-测试使用临时目录、内存 SQLite、真实 rc.5 服务和模拟上游，不读取实际会话或使用生产模型凭据。
+测试使用临时目录、内存 SQLite、真实 rc.3 服务和模拟上游，不读取实际会话或使用生产模型凭据。
 只有用户在日常界面安装和配置后，才能完成真实浏览器与实际模型的最终联调。
 
 发版：在 `master` 上开发和推送不会触发任何构建。改完后递增 `package.json` 版本并提交，打同名标签并推送，例如 `git tag v0.1.4 && git push origin master v0.1.4`。GitHub Actions（`.github/workflows/release.yml`）只在 `v*` 标签推送时运行：检查标签与版本一致，按 lockfile `npm ci`，由 `scripts/release.mjs` 构建、测试，在 `release` 分支上追加一个发布提交（源码加 `lib/`，去掉 `prepare`；父提交是上一个发布提交和该标签的源码提交）并推送。`release` 已有同一或更高版本时会拒绝发版。`npm run release` 可在本地对已打标签的提交生成同样的发布提交（不推送）。
